@@ -38,7 +38,9 @@ export async function POST(req: Request) {
       maxAge: 60 * 60 * 24 * 30,
     });
     return res;
-  } catch {
-    return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
+  } catch (e) {
+    console.error("SIGNUP ERROR:", e);
+    const msg = e instanceof Error ? e.message : "Something went wrong. Please try again.";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
