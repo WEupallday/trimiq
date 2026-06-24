@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Logo from "@/components/Logo";
 import UploadStudio from "./UploadStudio";
 
 export default function DashboardPage() {
@@ -10,9 +11,7 @@ export default function DashboardPage() {
       <header className="relative z-10 border-b border-white/10">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2 font-semibold">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-sm font-bold">
-              T
-            </span>
+            <Logo size={32} />
             TrimIQ
           </Link>
           <span className="glass rounded-full px-3 py-1.5 text-xs text-white/70">
