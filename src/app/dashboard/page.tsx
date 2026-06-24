@@ -1,8 +1,14 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import Logo from "@/components/Logo";
+import LogoutButton from "@/components/LogoutButton";
+import { getSession } from "@/lib/auth";
 import UploadStudio from "./UploadStudio";
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const session = await getSession();
+  if (!session) redirect("/login");
+
   return (
     <main className="relative min-h-screen overflow-hidden">
       <div className="pointer-events-none absolute -top-40 left-1/2 -translate-x-1/2 h-[420px] w-[420px] rounded-full bg-indigo-600/15 blur-[120px]" />
@@ -14,9 +20,13 @@ export default function DashboardPage() {
             <Logo size={32} />
             TrimIQ
           </Link>
-          <span className="glass rounded-full px-3 py-1.5 text-xs text-white/70">
-            Free plan · 5 edits left
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="hidden text-sm text-white/50 sm:inline">{session.email}</span>
+            <span className="glass rounded-full px-3 py-1.5 text-xs text-white/70">
+              Free plan · 5 edits left
+            </span>
+            <LogoutButton />
+          </div>
         </div>
       </header>
 
