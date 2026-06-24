@@ -8,10 +8,11 @@ import ffprobeStatic from "ffprobe-static";
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
 
-// Tunables
+// Tunables — dialed for tighter, smoother cuts. Easy to fine-tune later.
 const NOISE_DB = -30; // below this loudness counts as "silence"
-const MIN_SILENCE = 0.6; // only cut silences longer than this (seconds)
-const PAD = 0.1; // keep a little air around speech so cuts aren't abrupt
+const MIN_SILENCE = 0.5; // catch slightly shorter dead-air gaps too (seconds)
+const PAD = 0.12; // keep a touch of air around speech so cuts don't clip words
+const FADE = 0.025; // tiny audio fade at each join to avoid clicks/pops
 
 export type CleanResult = {
   original: number;
@@ -90,8 +91,13 @@ export async function cleanVideo(input: string, output: string): Promise<CleanRe
 
   let filter = "";
   segs.forEach(([a, b], i) => {
+    const dur = b - a;
     filter += `[0:v]trim=start=${a.toFixed(3)}:end=${b.toFixed(3)},setpts=PTS-STARTPTS[v${i}];`;
-    filter += `[0:a]atrim=start=${a.toFixed(3)}:end=${b.toFixed(3)},asetpts=PTS-STARTPTS[a${i}];`;
+    let aChain = `[0:a]atrim=start=${a.toFixed(3)}:end=${b.toFixed(3)},asetpts=PTS-STARTPTS`;
+    if (dur > FADE * 3) {
+      aChain += `,afade=t=in:st=0:d=${FADE},afade=t=out:st=${(dur - FADE).toFixed(3)}:d=${FADE}`;
+    }
+    filter += `${aChain}[a${i}];`;
   });
   segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
   filter += `concat=n=${segs.length}:v=1:a=1[outv][outa]`;
