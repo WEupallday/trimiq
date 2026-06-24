@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Logo from "@/components/Logo";
 
 export default function Home() {
   return (
@@ -11,9 +12,7 @@ export default function Home() {
       <header className="relative z-20">
         <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
           <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-sm font-bold">
-              T
-            </span>
+            <Logo size={32} />
             <span className="text-lg">TrimIQ</span>
           </Link>
           <div className="hidden items-center gap-8 text-sm text-white/70 md:flex">
@@ -244,9 +243,7 @@ export default function Home() {
       <footer className="relative z-10 border-t border-white/10">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 py-8 text-sm text-white/50 sm:flex-row">
           <div className="flex items-center gap-2">
-            <span className="grid h-6 w-6 place-items-center rounded-md bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-xs font-bold text-white">
-              T
-            </span>
+            <Logo size={24} />
             <span>TrimIQ</span>
           </div>
           <p>© {new Date().getFullYear()} TrimIQ. All rights reserved.</p>
