@@ -22,13 +22,13 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-3">
             <Link
-              href="/dashboard"
+              href="/login"
               className="hidden rounded-lg px-4 py-2 text-sm text-white/80 transition hover:text-white sm:block"
             >
               Log in
             </Link>
             <Link
-              href="/dashboard"
+              href="/signup"
               className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-ink transition hover:bg-white/90"
             >
               Get started
@@ -59,7 +59,7 @@ export default function Home() {
 
         <div className="animate-fade-up mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link
-            href="/dashboard"
+            href="/signup"
             className="group relative w-full rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-7 py-3.5 text-center font-medium shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40 sm:w-auto"
           >
             Start free — 5 edits
@@ -89,7 +89,7 @@ export default function Home() {
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
                 </div>
                 <p className="text-sm text-white/60">Drop your raw video here</p>
-                <Link href="/dashboard" className="rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2 text-sm font-medium transition hover:opacity-90">
+                <Link href="/signup" className="rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2 text-sm font-medium transition hover:opacity-90">
                   Generate Clean Edit
                 </Link>
               </div>
@@ -174,7 +174,7 @@ export default function Home() {
               <li>20-day trial</li>
               <li>Standard processing</li>
             </ul>
-            <Link href="/dashboard" className="glass mt-8 rounded-xl py-3 text-center font-medium transition hover:text-white">
+            <Link href="/signup" className="glass mt-8 rounded-xl py-3 text-center font-medium transition hover:text-white">
               Get started
             </Link>
           </div>
@@ -194,7 +194,7 @@ export default function Home() {
               <li>Faster processing</li>
               <li>Higher upload limits</li>
             </ul>
-            <Link href="/dashboard" className="mt-8 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center font-medium transition hover:opacity-90">
+            <Link href="/signup" className="mt-8 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center font-medium transition hover:opacity-90">
               Choose Creator
             </Link>
           </div>
@@ -211,7 +211,7 @@ export default function Home() {
               <li>Highest priority processing</li>
               <li>Higher upload limits</li>
             </ul>
-            <Link href="/dashboard" className="glass mt-8 rounded-xl py-3 text-center font-medium transition hover:text-white">
+            <Link href="/signup" className="glass mt-8 rounded-xl py-3 text-center font-medium transition hover:text-white">
               Choose Unlimited
             </Link>
           </div>
@@ -230,7 +230,7 @@ export default function Home() {
               Join creators saving hours every week with one-click clean edits.
             </p>
             <Link
-              href="/dashboard"
+              href="/signup"
               className="mt-8 inline-block rounded-xl bg-white px-8 py-3.5 font-medium text-ink transition hover:bg-white/90"
             >
               Start free
