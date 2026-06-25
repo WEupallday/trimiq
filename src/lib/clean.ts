@@ -279,9 +279,11 @@ function mergeRanges(ranges: [number, number][], minLen: number): [number, numbe
 async function getMotionTimes(input: string): Promise<number[]> {
   const meta = join(dirname(input), `motion-${Date.now()}.txt`);
   try {
-    // Write only scene-change frames' metadata to a file (tiny, memory-safe).
+    // Scan a DOWNSCALED copy for scene changes — tiny memory + much faster.
     await run(FFMPEG, [
-      "-i", input, "-vf", `select='gt(scene,0.06)',metadata=print:file=${meta}`, "-an", "-f", "null", "-",
+      "-threads", "1", "-i", input,
+      "-vf", `scale=240:-2,select='gt(scene,0.06)',metadata=print:file=${meta}`,
+      "-an", "-f", "null", "-",
     ]);
     const txt = await readFile(meta, "utf8").catch(() => "");
     const times: number[] = [];
