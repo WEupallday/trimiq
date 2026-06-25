@@ -16,16 +16,11 @@ const MODES = [
   { id: "aggressive", label: "Aggressive", desc: "Max trimming" },
 ] as const;
 
-const FORMATS = [
-  { id: "tiktok", label: "TikTok" },
-] as const;
-
-const STEPS = ["Uploading", "Analyzing speech", "Detecting pauses", "Cleaning video", "Rendering", "Finalizing"];
+const STEPS = ["Uploading", "Analyzing", "Detecting pauses", "Cleaning video", "Rendering", "Finalizing"];
 
 export default function UploadStudio() {
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<string>("balanced");
-  const [format, setFormat] = useState<string>("tiktok");
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [step, setStep] = useState(0);
   const [error, setError] = useState("");
@@ -63,7 +58,6 @@ export default function UploadStudio() {
       const body = new FormData();
       body.append("file", file);
       body.append("mode", mode);
-      body.append("format", format);
       const res = await fetch("/api/process", { method: "POST", body });
       if (!res.ok) {
         const j = await res.json().catch(() => ({ error: "Processing failed." }));
@@ -93,46 +87,25 @@ export default function UploadStudio() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      {/* Mode + format selectors */}
-      <div className="mb-6 grid gap-4 sm:grid-cols-2">
-        <div>
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">Editing mode</p>
-          <div className="grid grid-cols-3 gap-2">
-            {MODES.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => setMode(m.id)}
-                disabled={working}
-                className={`rounded-xl border px-2 py-2.5 text-center transition disabled:opacity-50 ${
-                  mode === m.id
-                    ? "border-indigo-400/60 bg-indigo-500/15 text-white"
-                    : "border-white/10 bg-white/[0.02] text-white/60 hover:text-white"
-                }`}
-              >
-                <div className="text-sm font-medium">{m.label}</div>
-                <div className="text-[10px] text-white/40">{m.desc}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">Export for</p>
-          <div className="grid grid-cols-3 gap-2">
-            {FORMATS.map((f) => (
-              <button
-                key={f.id}
-                onClick={() => setFormat(f.id)}
-                disabled={working}
-                className={`rounded-xl border px-2 py-3 text-center text-sm font-medium transition disabled:opacity-50 ${
-                  format === f.id
-                    ? "border-fuchsia-400/60 bg-fuchsia-500/15 text-white"
-                    : "border-white/10 bg-white/[0.02] text-white/60 hover:text-white"
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
+      {/* Editing mode selector */}
+      <div className="mb-6">
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">Editing mode</p>
+        <div className="grid grid-cols-3 gap-2">
+          {MODES.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => setMode(m.id)}
+              disabled={working}
+              className={`rounded-xl border px-2 py-2.5 text-center transition disabled:opacity-50 ${
+                mode === m.id
+                  ? "border-indigo-400/60 bg-indigo-500/15 text-white"
+                  : "border-white/10 bg-white/[0.02] text-white/60 hover:text-white"
+              }`}
+            >
+              <div className="text-sm font-medium">{m.label}</div>
+              <div className="text-[10px] text-white/40">{m.desc}</div>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -211,13 +184,13 @@ export default function UploadStudio() {
             <Stat label="Dead space" value={`${stats.percent}%`} highlight />
             <Stat label="Original" value={`${stats.original.toFixed(1)}s`} />
             <Stat label="Final" value={`${stats.cleaned.toFixed(1)}s`} />
-            <Stat label="Format" value={format.toUpperCase()} />
+            <Stat label="Time saved" value={`${stats.removed.toFixed(1)}s`} />
           </div>
 
           {resultUrl && (
             <>
-              <video src={resultUrl} controls className="mx-auto mt-5 max-h-[70vh] w-full rounded-xl" style={{ aspectRatio: "9/16", objectFit: "contain", background: "#000" }} />
-              <a href={resultUrl} download={`trimiq-${format}.mp4`} className="mt-4 block rounded-xl bg-white py-3 text-center font-medium text-ink transition hover:bg-white/90">
+              <video src={resultUrl} controls className="mx-auto mt-5 max-h-[70vh] w-full rounded-xl" style={{ maxHeight: "70vh", objectFit: "contain", background: "#000" }} />
+              <a href={resultUrl} download="trimiq-edit.mp4" className="mt-4 block rounded-xl bg-white py-3 text-center font-medium text-ink transition hover:bg-white/90">
                 Download clean video
               </a>
             </>
