@@ -19,8 +19,8 @@ const MODES = [
 
 const STEPS = ["Uploading", "Analyzing", "Detecting pauses", "Cleaning video", "Rendering", "Finalizing"];
 
-// Hosting proxy rejects uploads larger than this (returns an HTML error page).
-const MAX_UPLOAD_MB = 100;
+// Maximum upload size. Larger files are slow to upload and heavy to process.
+const MAX_UPLOAD_MB = 500;
 
 // Parse a response as JSON, but never throw on an HTML error page (e.g. a 413
 // from the proxy) — return a friendly object instead.
@@ -41,8 +41,25 @@ export default function UploadStudio() {
   const [error, setError] = useState("");
   const [resultUrl, setResultUrl] = useState("");
   const [stats, setStats] = useState<Stats | null>(null);
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState("");
+  const [feedbackSent, setFeedbackSent] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function sendFeedback() {
+    if (!rating) return;
+    setFeedbackSent(true);
+    try {
+      await fetch("/api/process?feedback=1", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating, comment }),
+      });
+    } catch {
+      /* non-blocking: thank the user regardless */
+    }
+  }
 
   function pick(f: File | null) {
     if (!f) return;
@@ -51,6 +68,9 @@ export default function UploadStudio() {
     setError("");
     setResultUrl("");
     setStats(null);
+    setRating(0);
+    setComment("");
+    setFeedbackSent(false);
   }
 
   function startSteps() {
@@ -106,6 +126,7 @@ export default function UploadStudio() {
         const sres = await fetch(`/api/process?jobId=${jobId}`);
         const data = await safeJson(sres);
         if (data.status === "error") throw new Error(data.error || "Processing failed.");
+        if (!data.status && data.error) throw new Error(data.error); // job lost (e.g. server restart)
         if (data.status === "done") {
           setStats({
             original: data.stats.original,
@@ -244,7 +265,7 @@ export default function UploadStudio() {
 
           {stats.capped && (
             <p className="mt-3 text-xs text-white/40">
-              Large file — exported at 720p so processing stays fast and reliable.
+              Longer video — exported at a slightly lower resolution so processing stays fast and reliable.
             </p>
           )}
 
@@ -256,6 +277,45 @@ export default function UploadStudio() {
               </a>
             </>
           )}
+
+          {/* Beta feedback */}
+          <div className="mt-6 border-t border-white/10 pt-5">
+            {feedbackSent ? (
+              <p className="text-sm text-emerald-300">Thanks for the feedback — it really helps. 🙏</p>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-white/80">How was this edit?</p>
+                <div className="mt-2 flex gap-1.5">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setRating(n)}
+                      aria-label={`${n} star${n > 1 ? "s" : ""}`}
+                      className={`text-2xl leading-none transition ${n <= rating ? "text-amber-300" : "text-white/25 hover:text-white/50"}`}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="Anything we should improve? (optional)"
+                  rows={2}
+                  className="mt-3 w-full resize-none rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white placeholder:text-white/30 focus:border-indigo-400/50 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={sendFeedback}
+                  disabled={!rating}
+                  className="mt-3 rounded-xl bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Send feedback
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
