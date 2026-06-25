@@ -1,7 +1,11 @@
 import Link from "next/link";
 import Logo from "@/components/Logo";
+import { getSession } from "@/lib/auth";
 
-export default function Home() {
+export default async function Home() {
+  const session = await getSession();
+  const loggedIn = !!session;
+
   return (
     <main className="relative overflow-hidden">
       {/* Decorative glow blobs */}
@@ -21,18 +25,29 @@ export default function Home() {
             <a href="#pricing" className="transition hover:text-white">Pricing</a>
           </div>
           <div className="flex items-center gap-3">
-            <Link
-              href="/login"
-              className="hidden rounded-lg px-4 py-2 text-sm text-white/80 transition hover:text-white sm:block"
-            >
-              Log in
-            </Link>
-            <Link
-              href="/signup"
-              className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-ink transition hover:bg-white/90"
-            >
-              Get started
-            </Link>
+            {loggedIn ? (
+              <Link
+                href="/dashboard"
+                className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-ink transition hover:bg-white/90"
+              >
+                Go to Dashboard
+              </Link>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className="hidden rounded-lg px-4 py-2 text-sm text-white/80 transition hover:text-white sm:block"
+                >
+                  Log in
+                </Link>
+                <Link
+                  href="/signup"
+                  className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-ink transition hover:bg-white/90"
+                >
+                  Get started
+                </Link>
+              </>
+            )}
           </div>
         </nav>
       </header>
@@ -59,10 +74,10 @@ export default function Home() {
 
         <div className="animate-fade-up mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link
-            href="/signup"
+            href={loggedIn ? "/dashboard" : "/signup"}
             className="group relative w-full rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-7 py-3.5 text-center font-medium shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40 sm:w-auto"
           >
-            Start free — 5 edits
+            {loggedIn ? "Go to Dashboard" : "Start free — 5 edits"}
           </Link>
           <a
             href="#how"
