@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, readFile, unlink, mkdtemp } from "node:fs/promises";
+import { readFile, unlink, mkdtemp } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -26,20 +29,20 @@ export async function POST(req: NextRequest) {
     const mode: EditMode = MODES.includes(modeRaw) ? modeRaw : "balanced";
     const format: ExportFormat = FORMATS.includes(formatRaw) ? formatRaw : "tiktok";
 
-    const bytes = Buffer.from(await file.arrayBuffer());
-    if (bytes.length === 0) {
-      return NextResponse.json({ error: "The uploaded file is empty." }, { status: 400 });
-    }
-
     const dir = await mkdtemp(join(tmpdir(), "trimiq-"));
     const id = randomUUID();
     inPath = join(dir, `${id}-in.mp4`);
     outPath = join(dir, `${id}-out.mp4`);
-    await writeFile(inPath, bytes);
+
+    // Stream the upload straight to disk (no full-video Buffer held in memory).
+    await pipeline(Readable.fromWeb((file as File).stream() as any), createWriteStream(inPath));
 
     const result = await cleanVideo(inPath, outPath, { mode, format });
-    const cleaned = await readFile(outPath);
+    // Free the input file before sending the response.
+    await unlink(inPath).catch(() => {});
+    inPath = "";
 
+    const cleaned = await readFile(outPath);
     return new NextResponse(cleaned, {
       status: 200,
       headers: {
