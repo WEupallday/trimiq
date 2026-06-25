@@ -16,3 +16,11 @@ model User {
   editsUsed    Int      @default(0)
   createdAt    DateTime @default(now())
 }
+
+model Feedback {
+  id        String   @id @default(cuid())
+  email     String?
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+}
