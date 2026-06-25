@@ -318,8 +318,21 @@ async function protectBRoll(input: string, segs: [number, number][], duration: n
 }
 
 // ============================== rendering ==================================
-// Pass A: cut + concat at original resolution (audio fades for clean joins).
-async function renderCut(input: string, output: string, segs: [number, number][], s: Settings): Promise<void> {
+// Single memory-light pass: cut + concat + reframe to 9:16 (P2) + subtle
+// animated zoom (P1) + export preset (P4). One ffmpeg process, no intermediate.
+async function renderFinal(
+  input: string, output: string, segs: [number, number][], s: Settings, format: ExportFormat
+): Promise<void> {
+  const f = FORMAT_PRESETS[format];
+  const { w: iw, h: ih } = await getDims(input);
+  const wide = iw / ih > 9 / 16 + 0.01;
+  const reframe = wide
+    ? `crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=${f.w}:${f.h}`
+    : `scale=${f.w}:${f.h}:force_original_aspect_ratio=increase,crop=${f.w}:${f.h}`;
+  // Smooth zoom that gently breathes in/out (scale stays >= frame, centered).
+  const zoom =
+    `scale=w='${f.w}*(1.06+0.06*sin(t*1.2))':h='${f.h}*(1.06+0.06*sin(t*1.2))':eval=frame,crop=${f.w}:${f.h},setsar=1`;
+
   let filter = "";
   segs.forEach(([a, b], i) => {
     const dur = b - a;
@@ -329,28 +342,12 @@ async function renderCut(input: string, output: string, segs: [number, number][]
     filter += `${ac}[a${i}];`;
   });
   segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
-  filter += `concat=n=${segs.length}:v=1:a=1[outv][outa]`;
-  await run(FFMPEG, [
-    "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[outa]",
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "192k", output,
-  ]);
-}
+  filter += `concat=n=${segs.length}:v=1:a=1[cv][ca];[cv]${reframe},${zoom}[outv]`;
 
-// Pass B: auto-reframe to 9:16 (P2) + subtle animated zoom (P1) + export preset (P4).
-async function renderStyle(input: string, output: string, format: ExportFormat): Promise<void> {
-  const f = FORMAT_PRESETS[format];
-  const { w, h } = await getDims(input);
-  const wide = w / h > 9 / 16 + 0.01;
-  // Reframe: crop a centered 9:16 window from wide video, else fill the frame.
-  const reframe = wide
-    ? `crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=${f.w}:${f.h}`
-    : `scale=${f.w}:${f.h}:force_original_aspect_ratio=increase,crop=${f.w}:${f.h}`;
-  // Subtle, smooth zoom that gently breathes in and out, always centered.
-  const zoom =
-    `zoompan=z='1.04+0.04*sin(on/45)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:fps=${f.fps}:s=${f.w}x${f.h}`;
   await run(FFMPEG, [
-    "-y", "-i", input, "-vf", `${reframe},${zoom}`,
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", String(f.crf), "-pix_fmt", "yuv420p", "-r", String(f.fps),
+    "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[ca]",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", String(f.crf), "-pix_fmt", "yuv420p",
+    "-r", String(f.fps), "-threads", "1",
     "-c:a", "aac", "-b:a", `${f.audioKbps}k`, "-movflags", "+faststart", output,
   ]);
 }
@@ -410,19 +407,11 @@ export async function cleanVideo(
     try { segs = await protectBRoll(input, segs, original); } catch { /* keep segs */ }
   }
 
-  const cutFile = join(dirname(output), `cut-${Date.now()}.mp4`);
-  const nothingToCut =
-    segs.length === 0 || (segs.length === 1 && segs[0][0] <= 0.05 && segs[0][1] >= original - 0.05);
+  // If there's nothing meaningful to cut, keep the whole clip as one segment
+  // so reframe / zoom / export preset still apply.
+  if (segs.length === 0) segs = [[0, original]];
 
-  if (nothingToCut) {
-    await run(FFMPEG, ["-y", "-i", input, "-c", "copy", cutFile]);
-  } else {
-    await renderCut(input, cutFile, segs, settings);
-  }
-
-  // Style pass: reframe + zoom + export preset.
-  await renderStyle(cutFile, output, format);
-  await unlink(cutFile).catch(() => {});
+  await renderFinal(input, output, segs, settings, format);
   for (const a of audioFiles) await unlink(a).catch(() => {});
 
   const cleaned = await getDuration(output).catch(() => original);
