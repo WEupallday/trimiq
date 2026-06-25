@@ -8,11 +8,12 @@ import ffprobeStatic from "ffprobe-static";
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
 
-// Tunables — dialed for tighter, smoother cuts. Easy to fine-tune later.
-const NOISE_DB = -30; // below this loudness counts as "silence"
-const MIN_SILENCE = 0.5; // catch slightly shorter dead-air gaps too (seconds)
-const PAD = 0.12; // keep a touch of air around speech so cuts don't clip words
-const FADE = 0.025; // tiny audio fade at each join to avoid clicks/pops
+// Tunables — tuned to avoid clipping words while still catching pauses.
+const NOISE_DB = -32; // a bit lower so quiet speech isn't mistaken for silence
+const MIN_SILENCE = 0.4; // catch shorter pauses too (seconds)
+const TAIL_PAD = 0.15; // keep this much AFTER speech ends (don't clip word endings)
+const LEAD_PAD = 0.18; // resume this much BEFORE speech restarts (don't clip word starts)
+const FADE = 0.045; // short audio fade at each join to smooth the cut
 
 export type CleanResult = {
   original: number;
@@ -67,9 +68,9 @@ function keepSegments(silences: [number, number][], duration: number): [number, 
   let cursor = 0;
   for (const [s, e] of silences) {
     const keepStart = cursor;
-    const keepEnd = s + PAD;
+    const keepEnd = s + TAIL_PAD;
     if (keepEnd - keepStart > 0.05) segs.push([keepStart, Math.min(keepEnd, duration)]);
-    cursor = Math.max(cursor, e - PAD);
+    cursor = Math.max(cursor, e - LEAD_PAD);
   }
   if (cursor < duration - 0.05) segs.push([cursor, duration]);
   return segs.filter(([a, b]) => b - a > 0.05);
