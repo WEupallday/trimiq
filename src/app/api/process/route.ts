@@ -3,12 +3,13 @@ import { writeFile, readFile, unlink, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { cleanVideo } from "@/lib/clean";
+import { cleanVideo, type EditMode, type ExportFormat } from "@/lib/clean";
 
-// This route runs on the Node.js server (it needs ffmpeg + the file system),
-// not on the lightweight "edge" runtime.
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+const MODES: EditMode[] = ["light", "balanced", "aggressive"];
+const FORMATS: ExportFormat[] = ["tiktok", "reels", "shorts"];
 
 export async function POST(req: NextRequest) {
   let inPath = "";
@@ -16,10 +17,14 @@ export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
     const file = form.get("file");
-
     if (!file || typeof file === "string") {
       return NextResponse.json({ error: "No video file received." }, { status: 400 });
     }
+
+    const modeRaw = String(form.get("mode") || "balanced") as EditMode;
+    const formatRaw = String(form.get("format") || "tiktok") as ExportFormat;
+    const mode: EditMode = MODES.includes(modeRaw) ? modeRaw : "balanced";
+    const format: ExportFormat = FORMATS.includes(formatRaw) ? formatRaw : "tiktok";
 
     const bytes = Buffer.from(await file.arrayBuffer());
     if (bytes.length === 0) {
@@ -30,20 +35,23 @@ export async function POST(req: NextRequest) {
     const id = randomUUID();
     inPath = join(dir, `${id}-in.mp4`);
     outPath = join(dir, `${id}-out.mp4`);
-
     await writeFile(inPath, bytes);
 
-    const result = await cleanVideo(inPath, outPath);
+    const result = await cleanVideo(inPath, outPath, { mode, format });
     const cleaned = await readFile(outPath);
 
     return new NextResponse(cleaned, {
       status: 200,
       headers: {
         "Content-Type": "video/mp4",
-        "Content-Disposition": 'attachment; filename="trimiq-clean.mp4"',
+        "Content-Disposition": `attachment; filename="trimiq-${format}.mp4"`,
         "X-Original-Seconds": result.original.toFixed(2),
         "X-Cleaned-Seconds": result.cleaned.toFixed(2),
         "X-Removed-Seconds": result.removed.toFixed(2),
+        "X-Cuts": String(result.cuts),
+        "X-Percent-Removed": String(result.percentRemoved),
+        "X-Mode": result.editMode,
+        "X-Format": result.format,
       },
     });
   } catch (err) {
