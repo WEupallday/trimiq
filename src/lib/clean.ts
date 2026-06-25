@@ -277,17 +277,22 @@ function mergeRanges(ranges: [number, number][], minLen: number): [number, numbe
 // Find timestamps with visual motion (scene changes). Used to preserve
 // non-speech moments where the product is being shown / moved.
 async function getMotionTimes(input: string): Promise<number[]> {
+  const meta = join(dirname(input), `motion-${Date.now()}.txt`);
   try {
-    const { stderr } = await run(FFMPEG, [
-      "-i", input, "-vf", "select='gt(scene,0.05)',showinfo", "-an", "-f", "null", "-",
+    // Write only scene-change frames' metadata to a file (tiny, memory-safe).
+    await run(FFMPEG, [
+      "-i", input, "-vf", `select='gt(scene,0.06)',metadata=print:file=${meta}`, "-an", "-f", "null", "-",
     ]);
+    const txt = await readFile(meta, "utf8").catch(() => "");
     const times: number[] = [];
     const re = /pts_time:([0-9.]+)/g;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(stderr)) !== null) times.push(parseFloat(m[1]));
+    while ((m = re.exec(txt)) !== null) times.push(parseFloat(m[1]));
     return times;
   } catch {
     return [];
+  } finally {
+    await unlink(meta).catch(() => {});
   }
 }
 
@@ -399,7 +404,11 @@ export async function cleanVideo(
   }
 
   // B-roll protection (P3) — preserve motion-rich non-speech moments.
-  try { segs = await protectBRoll(input, segs, original); } catch { /* keep segs */ }
+  // Temporarily disabled: the per-frame motion scan is too heavy for the
+  // 512MB instance. Re-enabled below via a memory-safe, file-based scan.
+  if (process.env.ENABLE_BROLL === "1") {
+    try { segs = await protectBRoll(input, segs, original); } catch { /* keep segs */ }
+  }
 
   const cutFile = join(dirname(output), `cut-${Date.now()}.mp4`);
   const nothingToCut =
