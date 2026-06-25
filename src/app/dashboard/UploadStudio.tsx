@@ -56,31 +56,45 @@ export default function UploadStudio() {
     setError("");
     startSteps();
     try {
-      // Send the raw file as the body so the server can stream it to disk
-      // (no large multipart buffer held in memory). Mode goes in the query.
+      // 1) Upload the raw file. The server starts editing in the background and
+      //    returns a job id right away, so this request stays short.
       const res = await fetch(`/api/process?mode=${encodeURIComponent(mode)}`, {
         method: "POST",
         headers: { "Content-Type": file.type || "video/mp4" },
         body: file,
       });
       if (!res.ok) {
-        const j = await res.json().catch(() => ({ error: "Processing failed." }));
-        throw new Error(j.error || "Processing failed.");
+        const j = await res.json().catch(() => ({ error: "Upload failed." }));
+        throw new Error(j.error || "Upload failed.");
       }
-      const h = res.headers;
-      setStats({
-        original: Number(h.get("X-Original-Seconds") || 0),
-        cleaned: Number(h.get("X-Cleaned-Seconds") || 0),
-        removed: Number(h.get("X-Removed-Seconds") || 0),
-        cuts: Number(h.get("X-Cuts") || 0),
-        percent: Number(h.get("X-Percent-Removed") || 0),
-        capped: h.get("X-Capped") === "720",
-      });
-      const blob = await res.blob();
-      stopSteps();
-      setStep(STEPS.length);
-      setResultUrl(URL.createObjectURL(blob));
-      setStatus("done");
+      const { jobId } = await res.json();
+      if (!jobId) throw new Error("Upload failed.");
+
+      // 2) Poll until the edit is done (up to ~12 minutes).
+      for (let i = 0; i < 300; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const sres = await fetch(`/api/process?jobId=${jobId}`);
+        const data = await sres.json();
+        if (data.status === "error") throw new Error(data.error || "Processing failed.");
+        if (data.status === "done") {
+          setStats({
+            original: data.stats.original,
+            cleaned: data.stats.cleaned,
+            removed: data.stats.removed,
+            cuts: data.stats.cuts,
+            percent: data.stats.percent,
+            capped: data.stats.capped,
+          });
+          // 3) Download the finished video.
+          const blob = await (await fetch(`/api/process?jobId=${jobId}&download=1`)).blob();
+          stopSteps();
+          setStep(STEPS.length);
+          setResultUrl(URL.createObjectURL(blob));
+          setStatus("done");
+          return;
+        }
+      }
+      throw new Error("This is taking longer than expected. Please try again.");
     } catch (e) {
       stopSteps();
       setError(e instanceof Error ? e.message : "Something went wrong.");
