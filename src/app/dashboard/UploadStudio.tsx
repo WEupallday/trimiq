@@ -19,6 +19,20 @@ const MODES = [
 
 const STEPS = ["Uploading", "Analyzing", "Detecting pauses", "Cleaning video", "Rendering", "Finalizing"];
 
+// Hosting proxy rejects uploads larger than this (returns an HTML error page).
+const MAX_UPLOAD_MB = 100;
+
+// Parse a response as JSON, but never throw on an HTML error page (e.g. a 413
+// from the proxy) — return a friendly object instead.
+async function safeJson(res: Response): Promise<any> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: res.status === 413 ? "That file is too large to upload." : "Upload failed." };
+  }
+}
+
 export default function UploadStudio() {
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<string>("balanced");
@@ -52,6 +66,19 @@ export default function UploadStudio() {
 
   async function generate() {
     if (!file) return;
+
+    // The hosting platform rejects uploads larger than ~100 MB before they reach
+    // the editor. Catch that here with a clear message instead of a failed upload.
+    const sizeMb = file.size / 1024 / 1024;
+    if (sizeMb > MAX_UPLOAD_MB) {
+      setError(
+        `This video is ${sizeMb.toFixed(0)} MB, which is too large to upload (limit is about ${MAX_UPLOAD_MB} MB). ` +
+          `Record or export in 1080p instead of 4K, or use a shorter clip — that keeps files well under the limit.`
+      );
+      setStatus("error");
+      return;
+    }
+
     setStatus("working");
     setError("");
     startSteps();
@@ -64,17 +91,20 @@ export default function UploadStudio() {
         body: file,
       });
       if (!res.ok) {
-        const j = await res.json().catch(() => ({ error: "Upload failed." }));
-        throw new Error(j.error || "Upload failed.");
+        const j = await safeJson(res);
+        throw new Error(
+          j.error || (res.status === 413 ? "That file is too large to upload." : "Upload failed.")
+        );
       }
-      const { jobId } = await res.json();
-      if (!jobId) throw new Error("Upload failed.");
+      const start = await safeJson(res);
+      const jobId = start.jobId;
+      if (!jobId) throw new Error(start.error || "Upload failed.");
 
       // 2) Poll until the edit is done (up to ~12 minutes).
       for (let i = 0; i < 300; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         const sres = await fetch(`/api/process?jobId=${jobId}`);
-        const data = await sres.json();
+        const data = await safeJson(sres);
         if (data.status === "error") throw new Error(data.error || "Processing failed.");
         if (data.status === "done") {
           setStats({
@@ -143,7 +173,13 @@ export default function UploadStudio() {
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
         </div>
         {file ? <p className="mt-4 font-medium">{file.name}</p> : <p className="mt-4 text-white/60">Click to choose a video, or drag one here</p>}
-        {file && <p className="mt-1 text-sm text-white/40">{(file.size / 1024 / 1024).toFixed(1)} MB</p>}
+        {file && (
+          <p className={`mt-1 text-sm ${file.size / 1024 / 1024 > MAX_UPLOAD_MB ? "text-red-300" : "text-white/40"}`}>
+            {(file.size / 1024 / 1024).toFixed(1)} MB
+            {file.size / 1024 / 1024 > MAX_UPLOAD_MB && ` — too large (max ~${MAX_UPLOAD_MB} MB)`}
+          </p>
+        )}
+        {!file && <p className="mt-1 text-xs text-white/30">Up to ~{MAX_UPLOAD_MB} MB · record in 1080p for best speed</p>}
       </div>
 
       {/* Action */}
