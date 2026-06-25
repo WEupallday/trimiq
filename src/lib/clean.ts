@@ -1,11 +1,11 @@
 // ===========================================================================
-// TrimIQ Editing Engine — V2.1
-//   Layer 1: Audio intelligence (adaptive silence detection, tight cuts)
-//   Layer 2: Speech understanding (transcription) with V3 false-start detection
-//
-// Layer 2 keeps only the FINAL successful take: it splits the transcript into
-// sentence attempts, collapses fast restarts, drops unfinished near-prefixes,
-// and removes spoken corrections. Falls back to Layer 1 if anything fails.
+// TrimIQ Editing Engine — V4
+//   Layer 1: Audio intelligence (adaptive silence detection) — fallback only
+//   Layer 2: Transcription-driven editing
+//     • False-start detection (keep the final take)            [P4]
+//     • Word-driven cuts that never clip a word                [P1]
+//     • Natural pauses kept, only long dead-air compressed     [P2]
+//     • Filler removal (um/uh always; like/so/you-know gated)  [P3]
 // ===========================================================================
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -16,15 +16,19 @@ import ffprobeStatic from "ffprobe-static";
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
 
-// ----------------------------- settings (P7) -------------------------------
+// ----------------------------- settings (P7/P6) ----------------------------
 export type Settings = {
   silenceThresholdDb: number | "auto";
   minPause: number;
-  leadIn: number;
-  trailOut: number;
+  leadIn: number; // (Layer 1)
+  trailOut: number; // (Layer 1)
+  naturalPause: number; // [P2] gaps up to here stay as natural rhythm
+  wordPad: number; // [P1] max padding into silence around a cut
   minClipLength: number;
   fade: number;
-  sentenceGap: number; // pause (s) that marks a new sentence attempt
+  sentenceGap: number;
+  removeFiller: boolean; // [P3] um / uh / er ...
+  removeSoftFiller: boolean; // [P3] like / so / you know (only when isolated)
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -32,9 +36,13 @@ export const DEFAULT_SETTINGS: Settings = {
   minPause: 0.4,
   leadIn: 0.12,
   trailOut: 0.18,
+  naturalPause: 0.35,
+  wordPad: 0.1,
   minClipLength: 0.2,
   fade: 0.05,
   sentenceGap: 0.6,
+  removeFiller: true,
+  removeSoftFiller: true,
 };
 
 export type CleanResult = {
@@ -106,12 +114,13 @@ function planFromSilences(silences: [number, number][], duration: number, s: Set
   return segs.filter(([x, y]) => y - x >= s.minClipLength);
 }
 
-// ======================= LAYER 2: false-start detection ====================
+// ===================== LAYER 2: transcription-driven =======================
 type Word = { w: string; term: boolean; start: number; end: number };
-type Line = { norm: string[]; start: number; end: number; term: boolean };
+type Line = { words: Word[]; norm: string[]; start: number; end: number; term: boolean };
 
 const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
-const FILLER = new Set(["um", "uh", "er", "ah", "hmm", "like"]);
+const HARD_FILLER = new Set(["um", "umm", "uh", "uhh", "uhm", "erm", "er", "err", "mm", "mmm", "hmm", "hmmm", "ah"]);
+const SOFT_FILLER = new Set(["like", "so", "basically", "literally"]);
 const CORR = new Set(["no", "nope", "wait", "sorry", "scratch", "redo", "actually", "oops", "nevermind"]);
 const CORR_PHRASES = [
   "let me say that again", "let me start over", "let me redo", "start over",
@@ -145,13 +154,13 @@ async function transcribe(audioPath: string, apiKey: string): Promise<Word[]> {
 }
 
 const mkLine = (ws: Word[]): Line => ({
+  words: ws,
   norm: ws.map((x) => x.w),
   start: ws[0].start,
   end: ws[ws.length - 1].end,
   term: ws[ws.length - 1].term,
 });
 
-// Split words into sentence attempts on terminal punctuation or a big pause.
 function splitLines(words: Word[], sentenceGap: number): Line[] {
   const lines: Line[] = [];
   let cur: Word[] = [];
@@ -167,25 +176,17 @@ function splitLines(words: Word[], sentenceGap: number): Line[] {
   return lines;
 }
 
-// Fast restart inside one line: if the opening two words repeat later, keep
-// from the LAST repeat (the final, fullest attempt).
-function collapseRestart(words: Word[], line: Line): Line {
+// Fast restart inside one line: keep from the LAST repeat of the opening.
+function collapseRestart(line: Line): Line {
   const n = line.norm;
   if (n.length < 4) return line;
   let last = 0;
-  if (n[1] === n[0]) last = 1; // duplicated first word ("today today...")
+  if (n[1] === n[0]) last = 1;
   for (let j = 2; j + 1 < n.length; j++) if (n[j] === n[0] && n[j + 1] === n[1]) last = j;
-  if (last <= 0) return line;
-  // Find the word window matching this line to re-slice with real timestamps.
-  return mkLine(wordsForLine(words, line).slice(last));
+  return last > 0 ? mkLine(line.words.slice(last)) : line;
 }
 
-// Map a line back to its source Word[] (so we keep accurate timestamps).
-function wordsForLine(all: Word[], line: Line): Word[] {
-  return all.filter((w) => w.start >= line.start - 1e-6 && w.end <= line.end + 1e-6);
-}
-
-const stripFiller = (a: string[]) => a.filter((w) => !FILLER.has(w));
+const stripFiller = (a: string[]) => a.filter((w) => !HARD_FILLER.has(w) && !SOFT_FILLER.has(w));
 function isNearPrefix(a: string[], b: string[]): boolean {
   a = stripFiller(a);
   b = stripFiller(b);
@@ -200,28 +201,73 @@ function isCorrectionLine(line: Line): boolean {
   return line.norm.length <= 3 && line.norm.some((w) => CORR.has(w));
 }
 
-// The brain: return the time ranges of the takes worth keeping.
+// [P3] Drop filler words from the kept word stream.
+function removeFillers(kw: Word[], s: Settings): Word[] {
+  if (!s.removeFiller) return kw;
+  const out: Word[] = [];
+  for (let i = 0; i < kw.length; i++) {
+    const w = kw[i].w;
+    if (HARD_FILLER.has(w)) continue;
+    if (s.removeSoftFiller) {
+      const prev = out[out.length - 1];
+      const next = kw[i + 1];
+      const isolated =
+        (!prev || kw[i].start - prev.end > 0.2) && (!next || next.start - kw[i].end > 0.2);
+      // "you know" filler pair — isolation measured around the whole pair
+      if (w === "you" && next && next.w === "know") {
+        const after = kw[i + 2];
+        const isoPair =
+          (!prev || kw[i].start - prev.end > 0.2) && (!after || after.start - next.end > 0.2);
+        if (isoPair || !prev) {
+          i++;
+          continue;
+        }
+      }
+      if (SOFT_FILLER.has(w) && (isolated || !prev)) continue;
+    }
+    out.push(kw[i]);
+  }
+  return out;
+}
+
+// The brain: surviving takes -> word-driven keep ranges (P1 + P2 + P3 + P4).
 function planFromTranscript(words: Word[], duration: number, s: Settings): [number, number][] {
-  let lines = splitLines(words, s.sentenceGap).map((l) => collapseRestart(words, l));
+  let lines = splitLines(words, s.sentenceGap).map(collapseRestart);
   lines = lines.filter((l) => !isCorrectionLine(l)); // remove spoken corrections
   const kept: Line[] = [];
   for (let i = 0; i < lines.length; i++) {
-    // Drop a line that's just the start of the next one (abandoned take) when it's
-    // either unfinished OR much shorter than the take that follows it.
     if (i + 1 < lines.length && isNearPrefix(lines[i].norm, lines[i + 1].norm)) {
       const a = lines[i].norm.length;
       const b = lines[i + 1].norm.length;
-      if (!lines[i].term || a < 0.85 * b) continue;
+      if (!lines[i].term || a < 0.85 * b) continue; // abandoned take
     }
     kept.push(lines[i]);
   }
-  const ranges = kept
-    .map((l) => [Math.max(0, l.start - s.leadIn), Math.min(duration, l.end + s.trailOut)] as [number, number])
-    .sort((a, b) => a[0] - b[0]);
+
+  let kw = removeFillers(kept.flatMap((l) => l.words), s); // [P3]
+  if (!kw.length) return [];
+
+  // Word-driven segments: never cut into a word; keep short gaps, compress long ones.
+  const segs: [number, number][] = [];
+  let segStart = Math.max(0, kw[0].start - Math.min(s.wordPad, 0.1));
+  for (let i = 0; i < kw.length; i++) {
+    const cur = kw[i];
+    const next = kw[i + 1];
+    if (!next) {
+      segs.push([segStart, Math.min(duration, cur.end + Math.min(s.wordPad, 0.12))]);
+      break;
+    }
+    const gap = next.start - cur.end;
+    if (gap <= s.naturalPause) continue; // [P2] natural beat — stay in one segment
+    const pad = Math.min(s.wordPad, gap * 0.4); // stay strictly inside the silence (P1)
+    segs.push([segStart, Math.min(duration, cur.end + pad)]);
+    segStart = Math.max(0, next.start - pad);
+  }
+
   const merged: [number, number][] = [];
-  for (const r of ranges) {
-    const lastR = merged[merged.length - 1];
-    if (lastR && r[0] - lastR[1] < s.minPause) lastR[1] = Math.max(lastR[1], r[1]);
+  for (const r of segs) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] - last[1] < 0.02) last[1] = Math.max(last[1], r[1]);
     else merged.push([...r]);
   }
   return merged.filter(([a, b]) => b - a >= s.minClipLength);
