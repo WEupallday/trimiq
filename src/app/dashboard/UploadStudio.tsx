@@ -8,6 +8,7 @@ type Stats = {
   removed: number;
   cuts: number;
   percent: number;
+  capped: boolean;
 };
 
 const MODES = [
@@ -55,10 +56,13 @@ export default function UploadStudio() {
     setError("");
     startSteps();
     try {
-      const body = new FormData();
-      body.append("file", file);
-      body.append("mode", mode);
-      const res = await fetch("/api/process", { method: "POST", body });
+      // Send the raw file as the body so the server can stream it to disk
+      // (no large multipart buffer held in memory). Mode goes in the query.
+      const res = await fetch(`/api/process?mode=${encodeURIComponent(mode)}`, {
+        method: "POST",
+        headers: { "Content-Type": file.type || "video/mp4" },
+        body: file,
+      });
       if (!res.ok) {
         const j = await res.json().catch(() => ({ error: "Processing failed." }));
         throw new Error(j.error || "Processing failed.");
@@ -70,6 +74,7 @@ export default function UploadStudio() {
         removed: Number(h.get("X-Removed-Seconds") || 0),
         cuts: Number(h.get("X-Cuts") || 0),
         percent: Number(h.get("X-Percent-Removed") || 0),
+        capped: h.get("X-Capped") === "720",
       });
       const blob = await res.blob();
       stopSteps();
@@ -186,6 +191,12 @@ export default function UploadStudio() {
             <Stat label="Final" value={`${stats.cleaned.toFixed(1)}s`} />
             <Stat label="Time saved" value={`${stats.removed.toFixed(1)}s`} />
           </div>
+
+          {stats.capped && (
+            <p className="mt-3 text-xs text-white/40">
+              Large file — exported at 720p so processing stays fast and reliable.
+            </p>
+          )}
 
           {resultUrl && (
             <>
