@@ -314,11 +314,15 @@ async function renderFinal(
   segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
   filter += `concat=n=${segs.length}:v=1:a=1[cv][ca];[cv]${reframe}${zoom}[outv]`;
 
+  // Capped (large/long) videos use a faster preset so they never time out on a
+  // single CPU; small clips keep the higher-quality preset. crf 18 ≈ visually
+  // lossless. Preserve source fps (no -r). Use all available CPU threads.
+  const preset = capped ? "superfast" : "veryfast";
+  const crf = capped ? "21" : "18";
   await run(FFMPEG, [
     "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[ca]",
-    // crf 18 ≈ visually lossless; preserve source fps (no -r). One thread caps memory.
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "1",
-    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output,
+    "-c:v", "libx264", "-preset", preset, "-crf", crf, "-pix_fmt", "yuv420p", "-threads", "0",
+    "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", output,
   ]);
   return capped;
 }
@@ -338,12 +342,17 @@ function countCuts(segs: [number, number][], duration: number): number {
 export async function cleanVideo(
   input: string,
   output: string,
-  opts: { mode?: EditMode; capHeight?: number } = {}
+  opts: { mode?: EditMode; fileBytes?: number } = {}
 ): Promise<CleanResult> {
   const editMode: EditMode = opts.mode || "balanced";
   const settings = MODE_PRESETS[editMode];
 
   const original = await getDuration(input);
+
+  // Long or large videos are rendered at 720p with a fast preset so they finish
+  // quickly on a single CPU (no timeouts). Short clips stay at full resolution.
+  const heavy = original > 75 || (opts.fileBytes ?? 0) > 60 * 1024 * 1024;
+  const capHeight = heavy ? 1280 : 0;
   let segs: [number, number][] = [];
   let mode: "smart" | "audio" = "audio";
   const audioFiles: string[] = [];
@@ -373,7 +382,7 @@ export async function cleanVideo(
   // Nothing to cut -> keep whole clip as one segment (reframe/zoom still apply).
   if (segs.length === 0) segs = [[0, original]];
 
-  const capped = await renderFinal(input, output, segs, settings, opts.capHeight || 0);
+  const capped = await renderFinal(input, output, segs, settings, capHeight);
   for (const a of audioFiles) await unlink(a).catch(() => {});
 
   const cleaned = await getDuration(output).catch(() => original);
