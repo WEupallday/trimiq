@@ -327,11 +327,8 @@ async function renderFinal(
   const { w: iw, h: ih } = await getDims(input);
   const wide = iw / ih > 9 / 16 + 0.01;
   const reframe = wide
-    ? `crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=${f.w}:${f.h}`
-    : `scale=${f.w}:${f.h}:force_original_aspect_ratio=increase,crop=${f.w}:${f.h}`;
-  // Smooth zoom that gently breathes in/out (scale stays >= frame, centered).
-  const zoom =
-    `scale=w='${f.w}*(1.06+0.06*sin(t*1.2))':h='${f.h}*(1.06+0.06*sin(t*1.2))':eval=frame,crop=${f.w}:${f.h},setsar=1`;
+    ? `crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=${f.w}:${f.h},setsar=1`
+    : `scale=${f.w}:${f.h}:force_original_aspect_ratio=increase,crop=${f.w}:${f.h},setsar=1`;
 
   let filter = "";
   segs.forEach(([a, b], i) => {
@@ -342,7 +339,7 @@ async function renderFinal(
     filter += `${ac}[a${i}];`;
   });
   segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
-  filter += `concat=n=${segs.length}:v=1:a=1[cv][ca];[cv]${reframe},${zoom}[outv]`;
+  filter += `concat=n=${segs.length}:v=1:a=1[cv][ca];[cv]${reframe}[outv]`;
 
   await run(FFMPEG, [
     "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[ca]",
@@ -400,12 +397,9 @@ export async function cleanVideo(
     segs = planFromSilences(silences, original, settings);
   }
 
-  // B-roll protection (P3) — preserve motion-rich non-speech moments.
-  // Temporarily disabled: the per-frame motion scan is too heavy for the
-  // 512MB instance. Re-enabled below via a memory-safe, file-based scan.
-  if (process.env.ENABLE_BROLL === "1") {
-    try { segs = await protectBRoll(input, segs, original); } catch { /* keep segs */ }
-  }
+  // B-roll protection — preserve non-speech moments that have visual motion
+  // (e.g. the product being shown/held). Memory-safe file-based motion scan.
+  try { segs = await protectBRoll(input, segs, original); } catch { /* keep segs */ }
 
   // If there's nothing meaningful to cut, keep the whole clip as one segment
   // so reframe / zoom / export preset still apply.
