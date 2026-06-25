@@ -34,9 +34,9 @@ const MAX_AGE = 30 * 60 * 1000; // 30 minutes
 export function createJob(): Job {
   // Opportunistic cleanup of old jobs.
   const now = Date.now();
-  for (const [id, j] of jobs) {
+  jobs.forEach((j, id) => {
     if (now - j.createdAt > MAX_AGE) jobs.delete(id);
-  }
+  });
   const job: Job = { id: randomUUID(), status: "processing", stage: "Analyzing", createdAt: now };
   jobs.set(job.id, job);
   return job;
