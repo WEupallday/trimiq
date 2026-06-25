@@ -67,6 +67,7 @@ export type CleanResult = {
   segments: [number, number][];
   mode: "smart" | "audio";
   editMode: EditMode;
+  capped: boolean;
 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -269,7 +270,13 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
 // ============================== rendering ==================================
 // Single memory-light pass: cut + concat + reframe (only if horizontal) +
 // subtle zoom, at ORIGINAL resolution + fps, encoded at high quality.
-async function renderFinal(input: string, output: string, segs: [number, number][], s: Settings): Promise<void> {
+async function renderFinal(
+  input: string,
+  output: string,
+  segs: [number, number][],
+  s: Settings,
+  capHeight: number
+): Promise<boolean> {
   const { w: iw, h: ih } = await getDims(input);
   const wide = iw / ih > 9 / 16 + 0.01;
 
@@ -282,6 +289,16 @@ async function renderFinal(input: string, output: string, segs: [number, number]
     ow = even(ih * 9 / 16);
     oh = even(ih);
     reframe = `crop=${ow}:${oh}:(iw-${ow})/2:0,`;
+  }
+
+  // Safety cap for large uploads: scale the output down so it fits the server's
+  // memory (keeps aspect ratio). Small clips pass through untouched.
+  let capped = false;
+  if (capHeight && oh > capHeight) {
+    const scale = capHeight / oh;
+    oh = even(capHeight);
+    ow = even(ow * scale);
+    capped = true;
   }
   // Subtle smooth zoom (gently breathes in/out, stays centered).
   const zoom = `scale=w='${ow}*(1.05+0.05*sin(t*1.2))':h='${oh}*(1.05+0.05*sin(t*1.2))':eval=frame,crop=${ow}:${oh},setsar=1`;
@@ -303,6 +320,7 @@ async function renderFinal(input: string, output: string, segs: [number, number]
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "1",
     "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output,
   ]);
+  return capped;
 }
 
 function countCuts(segs: [number, number][], duration: number): number {
@@ -320,7 +338,7 @@ function countCuts(segs: [number, number][], duration: number): number {
 export async function cleanVideo(
   input: string,
   output: string,
-  opts: { mode?: EditMode } = {}
+  opts: { mode?: EditMode; capHeight?: number } = {}
 ): Promise<CleanResult> {
   const editMode: EditMode = opts.mode || "balanced";
   const settings = MODE_PRESETS[editMode];
@@ -355,7 +373,7 @@ export async function cleanVideo(
   // Nothing to cut -> keep whole clip as one segment (reframe/zoom still apply).
   if (segs.length === 0) segs = [[0, original]];
 
-  await renderFinal(input, output, segs, settings);
+  const capped = await renderFinal(input, output, segs, settings, opts.capHeight || 0);
   for (const a of audioFiles) await unlink(a).catch(() => {});
 
   const cleaned = await getDuration(output).catch(() => original);
@@ -369,5 +387,6 @@ export async function cleanVideo(
     segments: segs,
     mode,
     editMode,
+    capped,
   };
 }
