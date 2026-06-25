@@ -291,8 +291,8 @@ async function renderFinal(
     reframe = `crop=${ow}:${oh}:(iw-${ow})/2:0,`;
   }
 
-  // Safety cap for large uploads: scale the output down so it fits the server's
-  // memory (keeps aspect ratio). Small clips pass through untouched.
+  // Safety cap for large uploads: scale the output down so big videos render
+  // fast on a single CPU (keeps aspect ratio). Small clips pass through.
   let capped = false;
   if (capHeight && oh > capHeight) {
     const scale = capHeight / oh;
@@ -300,25 +300,29 @@ async function renderFinal(
     ow = even(ow * scale);
     capped = true;
   }
-  // Subtle smooth zoom (gently breathes in/out, stays centered).
-  const zoom = `scale=w='${ow}*(1.05+0.05*sin(t*1.2))':h='${oh}*(1.05+0.05*sin(t*1.2))':eval=frame,crop=${ow}:${oh},setsar=1`;
 
+  // Per-clip zoom: each kept segment gets a slightly different framing (a gentle
+  // alternating punch-in). This gives the dynamic "edited" feel of zooms, but is
+  // a single constant scale per clip — far cheaper than animating every frame.
   let filter = "";
   segs.forEach(([a, b], i) => {
     const dur = b - a;
-    filter += `[0:v]trim=start=${a.toFixed(3)}:end=${b.toFixed(3)},setpts=PTS-STARTPTS[v${i}];`;
+    const z = i % 2 === 1 ? 1.08 : 1.0; // alternate clips get a subtle punch-in
+    const sw = even(ow * z);
+    const sh = even(oh * z);
+    const vchain = `${reframe}scale=${sw}:${sh},crop=${ow}:${oh}:(in_w-${ow})/2:(in_h-${oh})/2,setsar=1`;
+    filter += `[0:v]trim=start=${a.toFixed(3)}:end=${b.toFixed(3)},setpts=PTS-STARTPTS,${vchain}[v${i}];`;
     let ac = `[0:a]atrim=start=${a.toFixed(3)}:end=${b.toFixed(3)},asetpts=PTS-STARTPTS`;
     if (dur > s.fade * 3) ac += `,afade=t=in:st=0:d=${s.fade},afade=t=out:st=${(dur - s.fade).toFixed(3)}:d=${s.fade}`;
     filter += `${ac}[a${i}];`;
   });
   segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
-  filter += `concat=n=${segs.length}:v=1:a=1[cv][ca];[cv]${reframe}${zoom}[outv]`;
+  filter += `concat=n=${segs.length}:v=1:a=1[outv][ca]`;
 
-  // Capped (large/long) videos use a faster preset so they never time out on a
-  // single CPU; small clips keep the higher-quality preset. crf 18 ≈ visually
-  // lossless. Preserve source fps (no -r). Use all available CPU threads.
-  const preset = capped ? "superfast" : "veryfast";
-  const crf = capped ? "21" : "18";
+  // Capped (large/long) videos use the fastest preset so they finish quickly on
+  // a single CPU; small clips keep a higher-quality preset. Use all CPU threads.
+  const preset = capped ? "ultrafast" : "veryfast";
+  const crf = capped ? "22" : "18";
   await run(FFMPEG, [
     "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[ca]",
     "-c:v", "libx264", "-preset", preset, "-crf", crf, "-pix_fmt", "yuv420p", "-threads", "0",
@@ -349,10 +353,12 @@ export async function cleanVideo(
 
   const original = await getDuration(input);
 
-  // Long or large videos are rendered at 720p with a fast preset so they finish
-  // quickly on a single CPU (no timeouts). Short clips stay at full resolution.
-  const heavy = original > 75 || (opts.fileBytes ?? 0) > 60 * 1024 * 1024;
-  const capHeight = heavy ? 1280 : 0;
+  // Render resolution scales down with size/length so big videos finish quickly
+  // on a single CPU. Short clips keep full resolution.
+  const bytes = opts.fileBytes ?? 0;
+  let capHeight = 0;
+  if (original > 150 || bytes > 90 * 1024 * 1024) capHeight = 960; // ~540p, very large
+  else if (original > 75 || bytes > 60 * 1024 * 1024) capHeight = 1280; // 720p
   let segs: [number, number][] = [];
   let mode: "smart" | "audio" = "audio";
   const audioFiles: string[] = [];
