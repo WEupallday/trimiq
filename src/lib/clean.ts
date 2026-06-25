@@ -30,11 +30,11 @@ export type Settings = {
 
 export const DEFAULT_SETTINGS: Settings = {
   silenceThresholdDb: "auto",
-  minPause: 0.3,
-  leadIn: 0.08,
-  trailOut: 0.12,
+  minPause: 0.4, // only cut pauses longer than this — leaves short natural beats
+  leadIn: 0.12, // a touch more air before speech resumes
+  trailOut: 0.18, // a touch more air after speech ends (gentler cuts)
   minClipLength: 0.2,
-  fade: 0.04,
+  fade: 0.05,
   utteranceGap: 0.45,
 };
 
