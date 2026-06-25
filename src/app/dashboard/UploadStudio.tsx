@@ -18,8 +18,6 @@ const MODES = [
 
 const FORMATS = [
   { id: "tiktok", label: "TikTok" },
-  { id: "reels", label: "Reels" },
-  { id: "shorts", label: "Shorts" },
 ] as const;
 
 const STEPS = ["Uploading", "Analyzing speech", "Detecting pauses", "Cleaning video", "Rendering", "Finalizing"];
