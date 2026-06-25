@@ -1,12 +1,11 @@
 // ===========================================================================
-// TrimIQ Editing Engine — V2
+// TrimIQ Editing Engine — V2.1
 //   Layer 1: Audio intelligence (adaptive silence detection, tight cuts)
-//   Layer 2: Speech understanding via transcription (bad takes + mistakes)
+//   Layer 2: Speech understanding (transcription) with V3 false-start detection
 //
-// If DEEPGRAM_API_KEY is set, Layer 2 runs and produces a "human-edited" cut
-// (removes restarts, false starts, and spoken corrections). If the key is
-// missing OR anything fails, we safely fall back to Layer 1 so the editor
-// always returns a clean result.
+// Layer 2 keeps only the FINAL successful take: it splits the transcript into
+// sentence attempts, collapses fast restarts, drops unfinished near-prefixes,
+// and removes spoken corrections. Falls back to Layer 1 if anything fails.
 // ===========================================================================
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -20,22 +19,22 @@ const FFPROBE = ffprobeStatic.path || "ffprobe";
 // ----------------------------- settings (P7) -------------------------------
 export type Settings = {
   silenceThresholdDb: number | "auto";
-  minPause: number; // shortest pause (s) we cut
-  leadIn: number; // keep before speech (avoid clipping word starts)
-  trailOut: number; // keep after speech (small = snappy)
-  minClipLength: number; // drop kept pieces shorter than this
-  fade: number; // micro audio fade at joins
-  utteranceGap: number; // gap (s) that separates one utterance from the next
+  minPause: number;
+  leadIn: number;
+  trailOut: number;
+  minClipLength: number;
+  fade: number;
+  sentenceGap: number; // pause (s) that marks a new sentence attempt
 };
 
 export const DEFAULT_SETTINGS: Settings = {
   silenceThresholdDb: "auto",
-  minPause: 0.4, // only cut pauses longer than this — leaves short natural beats
-  leadIn: 0.12, // a touch more air before speech resumes
-  trailOut: 0.18, // a touch more air after speech ends (gentler cuts)
+  minPause: 0.4,
+  leadIn: 0.12,
+  trailOut: 0.18,
   minClipLength: 0.2,
   fade: 0.05,
-  utteranceGap: 0.45,
+  sentenceGap: 0.7,
 };
 
 export type CleanResult = {
@@ -44,7 +43,7 @@ export type CleanResult = {
   removed: number;
   segments: [number, number][];
   thresholdDb: number;
-  mode: "smart" | "audio"; // smart = transcription used
+  mode: "smart" | "audio";
 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -107,18 +106,18 @@ function planFromSilences(silences: [number, number][], duration: number, s: Set
   return segs.filter(([x, y]) => y - x >= s.minClipLength);
 }
 
-// ======================= LAYER 2: speech understanding =====================
-type Word = { w: string; start: number; end: number };
-type Utterance = { words: string[]; start: number; end: number };
-
-const CORRECTION = new Set([
-  "no", "nope", "wait", "sorry", "oops", "scratch", "redo", "nevermind", "nvm",
-  "actually", "hold", "ugh", "hmm",
-]);
+// ======================= LAYER 2: false-start detection ====================
+type Word = { w: string; term: boolean; start: number; end: number };
+type Line = { norm: string[]; start: number; end: number; term: boolean };
 
 const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+const FILLER = new Set(["um", "uh", "er", "ah", "hmm", "like"]);
+const CORR = new Set(["no", "nope", "wait", "sorry", "scratch", "redo", "actually", "oops", "nevermind"]);
+const CORR_PHRASES = [
+  "let me say that again", "let me start over", "let me redo", "start over",
+  "one more time", "say that again", "let me try again", "take that again", "do that again",
+];
 
-// Extract mono 16 kHz wav (small, ideal for speech-to-text).
 async function extractAudio(input: string): Promise<string> {
   const out = join(dirname(input), `audio-${Date.now()}.wav`);
   await run(FFMPEG, ["-y", "-i", input, "-vn", "-ac", "1", "-ar", "16000", out]);
@@ -129,75 +128,93 @@ async function transcribe(audioPath: string, apiKey: string): Promise<Word[]> {
   const bytes = await readFile(audioPath);
   const res = await fetch(
     "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&punctuate=true",
-    {
-      method: "POST",
-      headers: { Authorization: `Token ${apiKey}`, "Content-Type": "audio/wav" },
-      body: bytes,
-    }
+    { method: "POST", headers: { Authorization: `Token ${apiKey}`, "Content-Type": "audio/wav" }, body: bytes }
   );
   if (!res.ok) throw new Error(`Deepgram ${res.status}: ${await res.text()}`);
   const json: any = await res.json();
   const words = json?.results?.channels?.[0]?.alternatives?.[0]?.words ?? [];
-  return words.map((w: any) => ({ w: norm(w.word), start: w.start, end: w.end }));
+  return words
+    .map((x: any) => ({
+      w: norm(x.word),
+      term: /[.?!]$/.test(x.punctuated_word || x.word || ""),
+      start: x.start,
+      end: x.end,
+    }))
+    .filter((x: Word) => x.w);
 }
 
-function groupUtterances(words: Word[], gap: number): Utterance[] {
-  const out: Utterance[] = [];
+const mkLine = (ws: Word[]): Line => ({
+  norm: ws.map((x) => x.w),
+  start: ws[0].start,
+  end: ws[ws.length - 1].end,
+  term: ws[ws.length - 1].term,
+});
+
+// Split words into sentence attempts on terminal punctuation or a big pause.
+function splitLines(words: Word[], sentenceGap: number): Line[] {
+  const lines: Line[] = [];
   let cur: Word[] = [];
   for (let i = 0; i < words.length; i++) {
-    if (cur.length && words[i].start - cur[cur.length - 1].end > gap) {
-      out.push(toUtt(cur));
+    cur.push(words[i]);
+    const next = words[i + 1];
+    const bigPause = next && next.start - words[i].end > sentenceGap;
+    if (words[i].term || bigPause || !next) {
+      lines.push(mkLine(cur));
       cur = [];
     }
-    cur.push(words[i]);
   }
-  if (cur.length) out.push(toUtt(cur));
-  return out;
-}
-function toUtt(ws: Word[]): Utterance {
-  return { words: ws.map((x) => x.w).filter(Boolean), start: ws[0].start, end: ws[ws.length - 1].end };
+  return lines;
 }
 
-const isPrefix = (a: Utterance, b: Utterance) =>
-  a.words.length >= 2 &&
-  a.words.length < b.words.length &&
-  b.words.slice(0, a.words.length).join(" ") === a.words.join(" ");
+// Fast restart inside one line: if the opening two words repeat later, keep
+// from the LAST repeat (the final, fullest attempt).
+function collapseRestart(words: Word[], line: Line): Line {
+  const n = line.norm;
+  if (n.length < 4) return line;
+  let last = 0;
+  for (let j = 2; j + 1 < n.length; j++) if (n[j] === n[0] && n[j + 1] === n[1]) last = j;
+  if (last <= 0) return line;
+  // Find the word window matching this line to re-slice with real timestamps.
+  return mkLine(wordsForLine(words, line).slice(last));
+}
 
-const sharesStart = (a: Utterance, b: Utterance) =>
-  a.words.length >= 2 && b.words.length >= 2 && a.words[0] === b.words[0] && a.words[1] === b.words[1];
+// Map a line back to its source Word[] (so we keep accurate timestamps).
+function wordsForLine(all: Word[], line: Line): Word[] {
+  return all.filter((w) => w.start >= line.start - 1e-6 && w.end <= line.end + 1e-6);
+}
 
-const isCorrection = (u: Utterance) =>
-  u.words.length > 0 && u.words.length <= 3 && u.words.filter((w) => CORRECTION.has(w)).length >= 1;
+const stripFiller = (a: string[]) => a.filter((w) => !FILLER.has(w));
+function isNearPrefix(a: string[], b: string[]): boolean {
+  a = stripFiller(a);
+  b = stripFiller(b);
+  if (a.length < 2 || a.length >= b.length) return false;
+  let m = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] === b[i]) m++;
+  return m / a.length >= 0.75;
+}
+function isCorrectionLine(line: Line): boolean {
+  const t = line.norm.join(" ");
+  if (CORR_PHRASES.some((p) => t.includes(p))) return true;
+  return line.norm.length <= 3 && line.norm.some((w) => CORR.has(w));
+}
 
-// Decide which utterances to KEEP (drop abandoned takes + corrections).
-function keepUtterances(utts: Utterance[]): Utterance[] {
-  const drop = new Array(utts.length).fill(false);
-  for (let i = 0; i < utts.length; i++) {
-    // P2: an utterance that's just the start of the next one = abandoned take.
-    if (i + 1 < utts.length && isPrefix(utts[i], utts[i + 1])) drop[i] = true;
-    // P3: a spoken correction ("no", "wait"...) — drop it, and drop the aborted
-    // attempt right before it if the next attempt restarts the same sentence.
-    if (isCorrection(utts[i])) {
-      drop[i] = true;
-      if (i > 0 && i + 1 < utts.length && sharesStart(utts[i - 1], utts[i + 1])) drop[i - 1] = true;
-    }
-    // Near-duplicate restart: same opening, earlier one shorter = aborted.
-    if (i + 1 < utts.length && sharesStart(utts[i], utts[i + 1]) && utts[i].words.length < utts[i + 1].words.length) {
-      drop[i] = true;
-    }
+// The brain: return the time ranges of the takes worth keeping.
+function planFromTranscript(words: Word[], duration: number, s: Settings): [number, number][] {
+  let lines = splitLines(words, s.sentenceGap).map((l) => collapseRestart(words, l));
+  lines = lines.filter((l) => !isCorrectionLine(l)); // remove spoken corrections
+  const kept: Line[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    // Drop an unfinished line that is just the start of the next one (abandoned take).
+    if (i + 1 < lines.length && !lines[i].term && isNearPrefix(lines[i].norm, lines[i + 1].norm)) continue;
+    kept.push(lines[i]);
   }
-  return utts.filter((_, i) => !drop[i]);
-}
-
-function planFromUtterances(utts: Utterance[], duration: number, s: Settings): [number, number][] {
-  const ranges = utts
-    .map((u) => [Math.max(0, u.start - s.leadIn), Math.min(duration, u.end + s.trailOut)] as [number, number])
+  const ranges = kept
+    .map((l) => [Math.max(0, l.start - s.leadIn), Math.min(duration, l.end + s.trailOut)] as [number, number])
     .sort((a, b) => a[0] - b[0]);
-  // Merge ranges that overlap or sit within minPause of each other (natural flow).
   const merged: [number, number][] = [];
   for (const r of ranges) {
-    const last = merged[merged.length - 1];
-    if (last && r[0] - last[1] < s.minPause) last[1] = Math.max(last[1], r[1]);
+    const lastR = merged[merged.length - 1];
+    if (lastR && r[0] - lastR[1] < s.minPause) lastR[1] = Math.max(lastR[1], r[1]);
     else merged.push([...r]);
   }
   return merged.filter(([a, b]) => b - a >= s.minClipLength);
@@ -236,15 +253,13 @@ export async function cleanVideo(
   let mode: "smart" | "audio" = "audio";
   let thresholdDb = typeof settings.silenceThresholdDb === "number" ? settings.silenceThresholdDb : -32;
 
-  // ---- Layer 2 (smart) if a transcription key is configured ----
   const key = process.env.DEEPGRAM_API_KEY;
   if (key) {
     try {
       const audio = await extractAudio(input);
       const words = await transcribe(audio, key);
       if (words.length >= 3) {
-        const utts = keepUtterances(groupUtterances(words, settings.utteranceGap));
-        const smart = planFromUtterances(utts, original, settings);
+        const smart = planFromTranscript(words, original, settings);
         if (smart.length) {
           segs = smart;
           mode = "smart";
@@ -255,7 +270,6 @@ export async function cleanVideo(
     }
   }
 
-  // ---- Layer 1 (audio) fallback / default ----
   if (mode === "audio") {
     if (settings.silenceThresholdDb === "auto") {
       thresholdDb = clamp((await measureMaxDb(input)) - 30, -45, -20);
