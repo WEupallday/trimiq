@@ -6,13 +6,12 @@ import { pipeline } from "node:stream/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { cleanVideo, type EditMode, type ExportFormat } from "@/lib/clean";
+import { cleanVideo, type EditMode } from "@/lib/clean";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const MODES: EditMode[] = ["light", "balanced", "aggressive"];
-const FORMATS: ExportFormat[] = ["tiktok", "reels", "shorts"];
 
 export async function POST(req: NextRequest) {
   let inPath = "";
@@ -25,9 +24,7 @@ export async function POST(req: NextRequest) {
     }
 
     const modeRaw = String(form.get("mode") || "balanced") as EditMode;
-    const formatRaw = String(form.get("format") || "tiktok") as ExportFormat;
     const mode: EditMode = MODES.includes(modeRaw) ? modeRaw : "balanced";
-    const format: ExportFormat = FORMATS.includes(formatRaw) ? formatRaw : "tiktok";
 
     const dir = await mkdtemp(join(tmpdir(), "trimiq-"));
     const id = randomUUID();
@@ -37,7 +34,7 @@ export async function POST(req: NextRequest) {
     // Stream the upload straight to disk (no full-video Buffer held in memory).
     await pipeline(Readable.fromWeb((file as File).stream() as any), createWriteStream(inPath));
 
-    const result = await cleanVideo(inPath, outPath, { mode, format });
+    const result = await cleanVideo(inPath, outPath, { mode });
     // Free the input file before sending the response.
     await unlink(inPath).catch(() => {});
     inPath = "";
@@ -47,14 +44,13 @@ export async function POST(req: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": "video/mp4",
-        "Content-Disposition": `attachment; filename="trimiq-${format}.mp4"`,
+        "Content-Disposition": `attachment; filename="trimiq-edit.mp4"`,
         "X-Original-Seconds": result.original.toFixed(2),
         "X-Cleaned-Seconds": result.cleaned.toFixed(2),
         "X-Removed-Seconds": result.removed.toFixed(2),
         "X-Cuts": String(result.cuts),
         "X-Percent-Removed": String(result.percentRemoved),
         "X-Mode": result.editMode,
-        "X-Format": result.format,
       },
     });
   } catch (err) {
