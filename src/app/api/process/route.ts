@@ -13,11 +13,6 @@ export const maxDuration = 300;
 
 const MODES: EditMode[] = ["light", "balanced", "aggressive"];
 
-// Above this upload size we cap the export to 720p so processing fits the
-// server's memory. Smaller clips keep their full original resolution.
-const BIG_FILE_BYTES = 40 * 1024 * 1024;
-const SAFE_CAP_HEIGHT = 1280; // 720p in vertical terms
-
 export async function POST(req: NextRequest) {
   let inPath = "";
   let outPath = "";
@@ -42,9 +37,8 @@ export async function POST(req: NextRequest) {
     if (size < 1024) {
       return NextResponse.json({ error: "No video received." }, { status: 400 });
     }
-    const capHeight = size > BIG_FILE_BYTES ? SAFE_CAP_HEIGHT : 0;
 
-    const result = await cleanVideo(inPath, outPath, { mode, capHeight });
+    const result = await cleanVideo(inPath, outPath, { mode, fileBytes: size });
     await unlink(inPath).catch(() => {});
     inPath = "";
 
@@ -64,6 +58,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
+    console.error("PROCESS ERROR:", err);
     const message = err instanceof Error ? err.message : "Processing failed.";
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {
