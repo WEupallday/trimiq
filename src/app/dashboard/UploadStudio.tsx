@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 type Stats = {
   original: number;
@@ -33,7 +35,9 @@ async function safeJson(res: Response): Promise<any> {
   }
 }
 
-export default function UploadStudio() {
+export default function UploadStudio({ credits, unlimited }: { credits: number; unlimited: boolean }) {
+  const router = useRouter();
+  const [creditsLeft, setCreditsLeft] = useState(credits);
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<string>("balanced");
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
@@ -84,8 +88,11 @@ export default function UploadStudio() {
     timerRef.current = null;
   }
 
+  const outOfCredits = !unlimited && creditsLeft <= 0;
+
   async function generate() {
     if (!file) return;
+    if (outOfCredits) return;
 
     // The hosting platform rejects uploads larger than ~100 MB before they reach
     // the editor. Catch that here with a clear message instead of a failed upload.
@@ -112,6 +119,10 @@ export default function UploadStudio() {
       });
       if (!res.ok) {
         const j = await safeJson(res);
+        if (res.status === 402 || j.outOfCredits) {
+          setCreditsLeft(0); // flips the UI to the upgrade panel
+          router.refresh();
+        }
         throw new Error(
           j.error || (res.status === 413 ? "That file is too large to upload." : "Upload failed.")
         );
@@ -142,6 +153,10 @@ export default function UploadStudio() {
           setStep(STEPS.length);
           setResultUrl(URL.createObjectURL(blob));
           setStatus("done");
+          // A successful edit consumes one credit. Reflect it locally and refresh
+          // the server-rendered header to stay in sync with the database.
+          if (!unlimited) setCreditsLeft((c) => Math.max(0, c - 1));
+          router.refresh();
           return;
         }
       }
@@ -203,14 +218,35 @@ export default function UploadStudio() {
         {!file && <p className="mt-1 text-xs text-white/30">Up to ~{MAX_UPLOAD_MB} MB · record in 1080p for best speed</p>}
       </div>
 
-      {/* Action */}
-      <button
-        onClick={generate}
-        disabled={!file || working}
-        className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3.5 font-medium shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {working ? "Editing…" : "Generate Clean Edit"}
-      </button>
+      {/* Out of credits */}
+      {outOfCredits ? (
+        <div className="mt-5 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-5 text-center">
+          <p className="font-medium text-amber-200">You&apos;ve used all your free edits.</p>
+          <p className="mt-1 text-sm text-white/60">Upgrade to keep cleaning videos with TrimIQ.</p>
+          <Link
+            href="/#pricing"
+            className="mt-4 inline-block rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-6 py-3 font-medium transition hover:opacity-90"
+          >
+            View plans
+          </Link>
+        </div>
+      ) : (
+        <>
+          {/* Action */}
+          <button
+            onClick={generate}
+            disabled={!file || working}
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3.5 font-medium shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {working ? "Editing…" : "Generate Clean Edit"}
+          </button>
+          {!unlimited && (
+            <p className="mt-2 text-center text-xs text-white/40">
+              {creditsLeft} free {creditsLeft === 1 ? "edit" : "edits"} left
+            </p>
+          )}
+        </>
+      )}
 
       {/* Professional processing screen */}
       {working && (

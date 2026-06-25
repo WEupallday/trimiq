@@ -3,11 +3,20 @@ import { redirect } from "next/navigation";
 import Logo from "@/components/Logo";
 import LogoutButton from "@/components/LogoutButton";
 import { getSession } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { creditsLeft, isUnlimited } from "@/lib/credits";
 import UploadStudio from "./UploadStudio";
+
+export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const session = await getSession();
   if (!session) redirect("/login");
+
+  const user = await prisma.user.findUnique({ where: { email: session.email } });
+  const plan = user?.plan ?? "free";
+  const credits = creditsLeft(plan, user?.editsUsed ?? 0);
+  const unlimited = isUnlimited(plan);
 
   return (
     <main className="relative min-h-screen overflow-hidden">
@@ -23,7 +32,7 @@ export default async function DashboardPage() {
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-white/50 sm:inline">{session.email}</span>
             <span className="glass rounded-full px-3 py-1.5 text-xs text-white/70">
-              Free plan · 5 edits left
+              {unlimited ? `${plan} plan` : `Free plan · ${credits} ${credits === 1 ? "edit" : "edits"} left`}
             </span>
             <LogoutButton />
           </div>
@@ -38,7 +47,7 @@ export default async function DashboardPage() {
           </p>
         </div>
 
-        <UploadStudio />
+        <UploadStudio credits={credits} unlimited={unlimited} />
       </section>
     </main>
   );
