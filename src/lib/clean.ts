@@ -1,11 +1,13 @@
 // ===========================================================================
-// TrimIQ Editing Engine — V5 (premium)
+// TrimIQ Editing Engine — V6 (premium, quality-preserving)
 //   • Transcription-driven cuts (false starts, fillers, natural pauses, no clip)
 //   • Editing modes: light / balanced / aggressive
-//   • B-roll protection: preserve silent moments that have visual motion
-//   • Style pass: auto-reframe to 9:16, subtle animated zoom
-//   • Export presets: TikTok / Reels / Shorts
+//   • Subtle smooth zoom in/out
+//   • Auto-reframe horizontal -> 9:16 (vertical kept at original resolution)
+//   • Preserves original resolution + fps; encodes at high quality (no downscale)
 //   • Returns edit statistics
+// (Product/B-roll protection is optional and intentionally skipped — it added a
+//  heavy extra decode pass that hurt reliability on the current server.)
 // ===========================================================================
 import { spawn } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
@@ -56,15 +58,6 @@ export const MODE_PRESETS: Record<EditMode, Settings> = {
   },
 };
 
-// --------------------------- export presets (P4) ---------------------------
-export type ExportFormat = "tiktok" | "reels" | "shorts";
-
-export const FORMAT_PRESETS: Record<ExportFormat, { w: number; h: number; fps: number; crf: number; audioKbps: number }> = {
-  tiktok: { w: 1080, h: 1920, fps: 30, crf: 23, audioKbps: 128 },
-  reels: { w: 1080, h: 1920, fps: 30, crf: 21, audioKbps: 160 },
-  shorts: { w: 1080, h: 1920, fps: 30, crf: 20, audioKbps: 192 },
-};
-
 export type CleanResult = {
   original: number;
   cleaned: number;
@@ -74,10 +67,10 @@ export type CleanResult = {
   segments: [number, number][];
   mode: "smart" | "audio";
   editMode: EditMode;
-  format: ExportFormat;
 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
 function run(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -233,6 +226,17 @@ function removeFillers(kw: Word[], s: Settings): Word[] {
   return out;
 }
 
+function mergeRanges(ranges: [number, number][], minLen: number): [number, number][] {
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const r of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] - last[1] < 0.02) last[1] = Math.max(last[1], r[1]);
+    else merged.push([...r]);
+  }
+  return merged.filter(([a, b]) => b - a >= minLen);
+}
+
 function planFromTranscript(words: Word[], duration: number, s: Settings): [number, number][] {
   let lines = splitLines(words, s.sentenceGap).map(collapseRestart);
   lines = lines.filter((l) => !isCorrectionLine(l));
@@ -262,75 +266,25 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
   return mergeRanges(segs, s.minClipLength);
 }
 
-function mergeRanges(ranges: [number, number][], minLen: number): [number, number][] {
-  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
-  const merged: [number, number][] = [];
-  for (const r of sorted) {
-    const last = merged[merged.length - 1];
-    if (last && r[0] - last[1] < 0.02) last[1] = Math.max(last[1], r[1]);
-    else merged.push([...r]);
-  }
-  return merged.filter(([a, b]) => b - a >= minLen);
-}
-
-// ===================== B-ROLL protection (P3) ==============================
-// Find timestamps with visual motion (scene changes). Used to preserve
-// non-speech moments where the product is being shown / moved.
-async function getMotionTimes(input: string): Promise<number[]> {
-  const meta = join(dirname(input), `motion-${Date.now()}.txt`);
-  try {
-    // Scan a DOWNSCALED copy for scene changes — tiny memory + much faster.
-    await run(FFMPEG, [
-      "-threads", "1", "-i", input,
-      "-vf", `scale=240:-2,select='gt(scene,0.06)',metadata=print:file=${meta}`,
-      "-an", "-f", "null", "-",
-    ]);
-    const txt = await readFile(meta, "utf8").catch(() => "");
-    const times: number[] = [];
-    const re = /pts_time:([0-9.]+)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(txt)) !== null) times.push(parseFloat(m[1]));
-    return times;
-  } catch {
-    return [];
-  } finally {
-    await unlink(meta).catch(() => {});
-  }
-}
-
-// Add back removed gaps that contain real motion (likely a product showcase).
-async function protectBRoll(input: string, segs: [number, number][], duration: number): Promise<[number, number][]> {
-  const motion = await getMotionTimes(input);
-  if (!motion.length) return segs;
-  // Complement = removed regions.
-  const removed: [number, number][] = [];
-  let cursor = 0;
-  for (const [a, b] of segs) {
-    if (a - cursor > 0.05) removed.push([cursor, a]);
-    cursor = Math.max(cursor, b);
-  }
-  if (duration - cursor > 0.05) removed.push([cursor, duration]);
-  const preserve: [number, number][] = [];
-  for (const [a, b] of removed) {
-    if (b - a < 1.2) continue; // only consider meaningful gaps
-    const hits = motion.filter((t) => t >= a && t <= b).length;
-    if (hits / (b - a) >= 0.4) preserve.push([a, b]); // motion-dense → keep
-  }
-  return preserve.length ? mergeRanges([...segs, ...preserve], 0.18) : segs;
-}
-
 // ============================== rendering ==================================
-// Single memory-light pass: cut + concat + reframe to 9:16 (P2) + subtle
-// animated zoom (P1) + export preset (P4). One ffmpeg process, no intermediate.
-async function renderFinal(
-  input: string, output: string, segs: [number, number][], s: Settings, format: ExportFormat
-): Promise<void> {
-  const f = FORMAT_PRESETS[format];
+// Single memory-light pass: cut + concat + reframe (only if horizontal) +
+// subtle zoom, at ORIGINAL resolution + fps, encoded at high quality.
+async function renderFinal(input: string, output: string, segs: [number, number][], s: Settings): Promise<void> {
   const { w: iw, h: ih } = await getDims(input);
   const wide = iw / ih > 9 / 16 + 0.01;
-  const reframe = wide
-    ? `crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=${f.w}:${f.h},setsar=1`
-    : `scale=${f.w}:${f.h}:force_original_aspect_ratio=increase,crop=${f.w}:${f.h},setsar=1`;
+
+  // Output dimensions preserve quality: crop a 9:16 window for horizontal video
+  // (at full source height — no upscaling), otherwise keep the native size.
+  let ow = even(iw);
+  let oh = even(ih);
+  let reframe = "";
+  if (wide) {
+    ow = even(ih * 9 / 16);
+    oh = even(ih);
+    reframe = `crop=${ow}:${oh}:(iw-${ow})/2:0,`;
+  }
+  // Subtle smooth zoom (gently breathes in/out, stays centered).
+  const zoom = `scale=w='${ow}*(1.05+0.05*sin(t*1.2))':h='${oh}*(1.05+0.05*sin(t*1.2))':eval=frame,crop=${ow}:${oh},setsar=1`;
 
   let filter = "";
   segs.forEach(([a, b], i) => {
@@ -341,13 +295,13 @@ async function renderFinal(
     filter += `${ac}[a${i}];`;
   });
   segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
-  filter += `concat=n=${segs.length}:v=1:a=1[cv][ca];[cv]${reframe}[outv]`;
+  filter += `concat=n=${segs.length}:v=1:a=1[cv][ca];[cv]${reframe}${zoom}[outv]`;
 
   await run(FFMPEG, [
     "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[ca]",
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", String(f.crf), "-pix_fmt", "yuv420p",
-    "-r", String(f.fps), "-threads", "1",
-    "-c:a", "aac", "-b:a", `${f.audioKbps}k`, "-movflags", "+faststart", output,
+    // crf 18 ≈ visually lossless; preserve source fps (no -r). One thread caps memory.
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "1",
+    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output,
   ]);
 }
 
@@ -366,10 +320,9 @@ function countCuts(segs: [number, number][], duration: number): number {
 export async function cleanVideo(
   input: string,
   output: string,
-  opts: { mode?: EditMode; format?: ExportFormat } = {}
+  opts: { mode?: EditMode } = {}
 ): Promise<CleanResult> {
   const editMode: EditMode = opts.mode || "balanced";
-  const format: ExportFormat = opts.format || "tiktok";
   const settings = MODE_PRESETS[editMode];
 
   const original = await getDuration(input);
@@ -399,15 +352,10 @@ export async function cleanVideo(
     segs = planFromSilences(silences, original, settings);
   }
 
-  // B-roll protection — preserve non-speech moments that have visual motion
-  // (e.g. the product being shown/held). Memory-safe file-based motion scan.
-  try { segs = await protectBRoll(input, segs, original); } catch { /* keep segs */ }
-
-  // If there's nothing meaningful to cut, keep the whole clip as one segment
-  // so reframe / zoom / export preset still apply.
+  // Nothing to cut -> keep whole clip as one segment (reframe/zoom still apply).
   if (segs.length === 0) segs = [[0, original]];
 
-  await renderFinal(input, output, segs, settings, format);
+  await renderFinal(input, output, segs, settings);
   for (const a of audioFiles) await unlink(a).catch(() => {});
 
   const cleaned = await getDuration(output).catch(() => original);
@@ -421,6 +369,5 @@ export async function cleanVideo(
     segments: segs,
     mode,
     editMode,
-    format,
   };
 }
