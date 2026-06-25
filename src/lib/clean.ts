@@ -91,6 +91,14 @@ async function getDuration(file: string): Promise<number> {
   return parseFloat(stdout.trim());
 }
 
+async function getDims(file: string): Promise<{ w: number; h: number }> {
+  const { stdout } = await run(FFPROBE, [
+    "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", file,
+  ]);
+  const [w, h] = stdout.trim().split(",").map(Number);
+  return { w: w || 1080, h: h || 1920 };
+}
+
 // ============================ LAYER 1: audio ===============================
 async function measureMaxDb(file: string): Promise<number> {
   const { stderr } = await run(FFMPEG, ["-i", file, "-af", "volumedetect", "-f", "null", "-"]);
@@ -259,21 +267,35 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
 }
 
 // ============================== rendering ==================================
-// Timeline-only edit: cut the kept segments and concatenate them. NO visual
-// changes whatsoever — no crop, zoom, reframe, scale, or aspect-ratio change.
-// The output keeps the source's exact resolution, aspect ratio, framing and fps;
-// the only difference from the original is that unwanted sections are removed.
+// Timeline-only edit: cut the kept segments and concatenate them. No crop, zoom,
+// reframe, or aspect-ratio change — framing is preserved exactly. The ONLY visual
+// change is a safety scale-down for sources above 1080p (true 4K), which is
+// required so they don't exhaust the server's memory; 1080p-and-under is untouched
+// and TikTok displays at most 1080p, so the result looks identical when posted.
 async function renderFinal(
   input: string,
   output: string,
   segs: [number, number][],
   s: Settings
-): Promise<void> {
+): Promise<boolean> {
+  const { w, h } = await getDims(input);
+  const longSide = Math.max(w, h);
+  let scaled = false;
+  let vscale = ""; // empty unless we need the safety scale-down
+
+  if (longSide > 1920) {
+    const f = 1920 / longSide;
+    // Scale preserving aspect ratio (no crop). -2 keeps the other dim even & in-ratio.
+    if (w >= h) vscale = `,scale=1920:-2`;
+    else vscale = `,scale=-2:1920`;
+    scaled = true;
+  }
+
   let filter = "";
   segs.forEach(([a, b], i) => {
     const dur = b - a;
-    // Video: trim only. No scale/crop/setsar — pixels are untouched.
-    filter += `[0:v]trim=start=${a.toFixed(3)}:end=${b.toFixed(3)},setpts=PTS-STARTPTS[v${i}];`;
+    // Video: trim (+ optional safety scale). No crop/reframe — framing untouched.
+    filter += `[0:v]trim=start=${a.toFixed(3)}:end=${b.toFixed(3)},setpts=PTS-STARTPTS${vscale}[v${i}];`;
     // Audio: trim + tiny fades at the joins to avoid clicks.
     let ac = `[0:a]atrim=start=${a.toFixed(3)}:end=${b.toFixed(3)},asetpts=PTS-STARTPTS`;
     if (dur > s.fade * 3) ac += `,afade=t=in:st=0:d=${s.fade},afade=t=out:st=${(dur - s.fade).toFixed(3)}:d=${s.fade}`;
@@ -282,14 +304,15 @@ async function renderFinal(
   segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
   filter += `concat=n=${segs.length}:v=1:a=1[outv][ca]`;
 
-  // High-quality re-encode (cuts require re-encoding). Preserve source resolution
-  // and fps (no scale, no -r). crf 18 is visually near-lossless.
+  // High-quality re-encode (cuts require re-encoding). Preserve fps (no -r).
+  // crf 18 is visually near-lossless.
   await run(FFMPEG, [
     "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[ca]",
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "0",
     "-max_muxing_queue_size", "1024",
     "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output,
   ]);
+  return scaled;
 }
 
 function countCuts(segs: [number, number][], duration: number): number {
@@ -307,11 +330,13 @@ function countCuts(segs: [number, number][], duration: number): number {
 export async function cleanVideo(
   input: string,
   output: string,
-  opts: { mode?: EditMode; fileBytes?: number } = {}
+  opts: { mode?: EditMode; fileBytes?: number; onStage?: (stage: string) => void } = {}
 ): Promise<CleanResult> {
   const editMode: EditMode = opts.mode || "balanced";
   const settings = MODE_PRESETS[editMode];
+  const stage = opts.onStage || (() => {});
 
+  stage("Analyzing");
   const original = await getDuration(input);
 
   let segs: [number, number][] = [];
@@ -333,6 +358,7 @@ export async function cleanVideo(
     }
   }
 
+  stage("Detecting pauses");
   if (mode === "audio") {
     let thresholdDb = -32;
     if (settings.silenceThresholdDb === "auto") thresholdDb = clamp((await measureMaxDb(input)) - 30, -45, -20);
@@ -340,11 +366,12 @@ export async function cleanVideo(
     segs = planFromSilences(silences, original, settings);
   }
 
-  // Nothing to cut -> keep whole clip as one segment (reframe/zoom still apply).
+  // Nothing to cut -> keep the whole clip as one segment.
   if (segs.length === 0) segs = [[0, original]];
 
-  await renderFinal(input, output, segs, settings);
-  const capped = false; // no resolution change anymore
+  stage("Rendering");
+  const capped = await renderFinal(input, output, segs, settings);
+  stage("Finalizing");
   for (const a of audioFiles) await unlink(a).catch(() => {});
 
   const cleaned = await getDuration(output).catch(() => original);

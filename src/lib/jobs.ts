@@ -1,6 +1,8 @@
 // In-memory job store for background video processing. Lives on the long-running
 // Node server (next start), so a job keeps running after its POST has returned.
+// Projects are kept for the life of the server process (no permanent storage yet).
 import { randomUUID } from "node:crypto";
+import { unlink } from "node:fs/promises";
 
 export type JobStatus = "processing" | "done" | "error";
 
@@ -15,6 +17,8 @@ export type JobStats = {
 
 export type Job = {
   id: string;
+  email: string;
+  originalName: string;
   status: JobStatus;
   stage: string;
   error?: string;
@@ -29,21 +33,51 @@ const g = globalThis as unknown as { __trimiqJobs?: Map<string, Job> };
 if (!g.__trimiqJobs) g.__trimiqJobs = new Map<string, Job>();
 export const jobs: Map<string, Job> = g.__trimiqJobs;
 
-const MAX_AGE = 30 * 60 * 1000; // 30 minutes
+// Keep recent projects available for the whole server session (best-effort).
+const MAX_AGE = 12 * 60 * 60 * 1000; // 12 hours
+const MAX_JOBS = 200; // safety cap on memory/disk
 
-export function createJob(): Job {
-  // Opportunistic cleanup of old jobs.
-  const now = Date.now();
-  jobs.forEach((j, id) => {
-    if (now - j.createdAt > MAX_AGE) jobs.delete(id);
-  });
-  const job: Job = { id: randomUUID(), status: "processing", stage: "Analyzing", createdAt: now };
+export function createJob(email: string, originalName: string): Job {
+  pruneOld();
+  const job: Job = {
+    id: randomUUID(),
+    email,
+    originalName,
+    status: "processing",
+    stage: "Queued",
+    createdAt: Date.now(),
+  };
   jobs.set(job.id, job);
   return job;
 }
 
+function pruneOld() {
+  const now = Date.now();
+  jobs.forEach((j, id) => {
+    if (now - j.createdAt > MAX_AGE) removeJob(id);
+  });
+  // If we still have too many, drop the oldest.
+  if (jobs.size > MAX_JOBS) {
+    const sorted = Array.from(jobs.values()).sort((a, b) => a.createdAt - b.createdAt);
+    sorted.slice(0, jobs.size - MAX_JOBS).forEach((j) => removeJob(j.id));
+  }
+}
+
 export function getJob(id: string): Job | undefined {
   return jobs.get(id);
+}
+
+export function listJobs(email: string): Job[] {
+  return Array.from(jobs.values())
+    .filter((j) => j.email === email)
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export function removeJob(id: string) {
+  const job = jobs.get(id);
+  if (job?.outputPath) unlink(job.outputPath).catch(() => {});
+  if (job?.inputPath) unlink(job.inputPath).catch(() => {});
+  jobs.delete(id);
 }
 
 // ---- Concurrency gate ------------------------------------------------------
