@@ -71,7 +71,6 @@ export type CleanResult = {
 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
 function run(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -90,14 +89,6 @@ function run(cmd: string, args: string[]): Promise<{ stdout: string; stderr: str
 async function getDuration(file: string): Promise<number> {
   const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
   return parseFloat(stdout.trim());
-}
-
-async function getDims(file: string): Promise<{ w: number; h: number }> {
-  const { stdout } = await run(FFPROBE, [
-    "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", file,
-  ]);
-  const [w, h] = stdout.trim().split(",").map(Number);
-  return { w: w || 1080, h: h || 1920 };
 }
 
 // ============================ LAYER 1: audio ===============================
@@ -268,48 +259,22 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
 }
 
 // ============================== rendering ==================================
-// Single memory-light pass: cut + concat + reframe (only if horizontal) +
-// subtle zoom, at ORIGINAL resolution + fps, encoded at high quality.
+// Timeline-only edit: cut the kept segments and concatenate them. NO visual
+// changes whatsoever — no crop, zoom, reframe, scale, or aspect-ratio change.
+// The output keeps the source's exact resolution, aspect ratio, framing and fps;
+// the only difference from the original is that unwanted sections are removed.
 async function renderFinal(
   input: string,
   output: string,
   segs: [number, number][],
-  s: Settings,
-  capHeight: number,
-  stepped: boolean
+  s: Settings
 ): Promise<void> {
-  const { w: iw, h: ih } = await getDims(input);
-  const wide = iw / ih > 9 / 16 + 0.01;
-
-  // Output dimensions preserve quality: crop a 9:16 window for horizontal video
-  // (at full source height — no upscaling), otherwise keep the native size.
-  let ow = even(iw);
-  let oh = even(ih);
-  let reframe = "";
-  if (wide) {
-    ow = even(ih * 9 / 16);
-    oh = even(ih);
-    reframe = `crop=${ow}:${oh}:(iw-${ow})/2:0,`;
-  }
-
-  // Scale the output down to the resolution ceiling (never upscale).
-  if (capHeight && oh > capHeight) {
-    const scale = capHeight / oh;
-    oh = even(capHeight);
-    ow = even(ow * scale);
-  }
-
-  // Per-clip zoom: each kept segment gets a slightly different framing (a gentle
-  // alternating punch-in). This gives the dynamic "edited" feel of zooms, but is
-  // a single constant scale per clip — far cheaper than animating every frame.
   let filter = "";
   segs.forEach(([a, b], i) => {
     const dur = b - a;
-    const z = i % 2 === 1 ? 1.08 : 1.0; // alternate clips get a subtle punch-in
-    const sw = even(ow * z);
-    const sh = even(oh * z);
-    const vchain = `${reframe}scale=${sw}:${sh},crop=${ow}:${oh}:(in_w-${ow})/2:(in_h-${oh})/2,setsar=1`;
-    filter += `[0:v]trim=start=${a.toFixed(3)}:end=${b.toFixed(3)},setpts=PTS-STARTPTS,${vchain}[v${i}];`;
+    // Video: trim only. No scale/crop/setsar — pixels are untouched.
+    filter += `[0:v]trim=start=${a.toFixed(3)}:end=${b.toFixed(3)},setpts=PTS-STARTPTS[v${i}];`;
+    // Audio: trim + tiny fades at the joins to avoid clicks.
     let ac = `[0:a]atrim=start=${a.toFixed(3)}:end=${b.toFixed(3)},asetpts=PTS-STARTPTS`;
     if (dur > s.fade * 3) ac += `,afade=t=in:st=0:d=${s.fade},afade=t=out:st=${(dur - s.fade).toFixed(3)}:d=${s.fade}`;
     filter += `${ac}[a${i}];`;
@@ -317,15 +282,13 @@ async function renderFinal(
   segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
   filter += `concat=n=${segs.length}:v=1:a=1[outv][ca]`;
 
-  // Long videos (stepped below 1080p) use the fastest preset so they finish
-  // quickly on one CPU; shorter clips keep a higher-quality preset.
-  const preset = stepped ? "ultrafast" : "veryfast";
-  const crf = stepped ? "22" : "19";
+  // High-quality re-encode (cuts require re-encoding). Preserve source resolution
+  // and fps (no scale, no -r). crf 18 is visually near-lossless.
   await run(FFMPEG, [
     "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[ca]",
-    "-c:v", "libx264", "-preset", preset, "-crf", crf, "-pix_fmt", "yuv420p", "-threads", "0",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "0",
     "-max_muxing_queue_size", "1024",
-    "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", output,
+    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output,
   ]);
 }
 
@@ -351,12 +314,6 @@ export async function cleanVideo(
 
   const original = await getDuration(input);
 
-  // Output never exceeds 1080p (TikTok's max anyway) so 4K sources don't blow up
-  // the encoder. Longer videos step down further so they stay fast on one CPU.
-  let capHeight = 1920; // 1080p ceiling
-  if (original > 240) capHeight = 960; // > 4 min -> 540p
-  else if (original > 90) capHeight = 1280; // > 1.5 min -> 720p
-  const stepped = capHeight < 1920; // reduced below 1080p for a long video
   let segs: [number, number][] = [];
   let mode: "smart" | "audio" = "audio";
   const audioFiles: string[] = [];
@@ -386,8 +343,8 @@ export async function cleanVideo(
   // Nothing to cut -> keep whole clip as one segment (reframe/zoom still apply).
   if (segs.length === 0) segs = [[0, original]];
 
-  await renderFinal(input, output, segs, settings, capHeight, stepped);
-  const capped = stepped;
+  await renderFinal(input, output, segs, settings);
+  const capped = false; // no resolution change anymore
   for (const a of audioFiles) await unlink(a).catch(() => {});
 
   const cleaned = await getDuration(output).catch(() => original);
