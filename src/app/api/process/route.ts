@@ -10,6 +10,7 @@ import { cleanVideo, type EditMode } from "@/lib/clean";
 import { createJob, getJob, runExclusive, queueDepth } from "@/lib/jobs";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { creditsLeft } from "@/lib/credits";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -55,6 +56,20 @@ export async function POST(req: NextRequest) {
     if (!req.body) {
       return NextResponse.json({ error: "No video received." }, { status: 400 });
     }
+    // Require a logged-in user and enforce free-trial credits before any work.
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: "Please log in to edit videos." }, { status: 401 });
+    }
+    const user = await prisma.user.findUnique({ where: { email: session.email } });
+    const plan = user?.plan ?? "free";
+    if (creditsLeft(plan, user?.editsUsed ?? 0) <= 0) {
+      return NextResponse.json(
+        { error: "You've used all your free edits. Upgrade to keep editing.", outOfCredits: true },
+        { status: 402 }
+      );
+    }
+
     const modeRaw = (req.nextUrl.searchParams.get("mode") || "balanced") as EditMode;
     const mode: EditMode = MODES.includes(modeRaw) ? modeRaw : "balanced";
 
@@ -89,7 +104,7 @@ export async function POST(req: NextRequest) {
       job.stage = "Processing";
       return cleanVideo(inPath, outPath, { mode, fileBytes: size });
     })
-      .then((result) => {
+      .then(async (result) => {
         job.status = "done";
         job.stats = {
           original: result.original,
@@ -99,6 +114,10 @@ export async function POST(req: NextRequest) {
           percent: result.percentRemoved,
           capped: result.capped,
         };
+        // Deduct exactly one credit, and only on success.
+        await prisma.user
+          .update({ where: { email: session.email }, data: { editsUsed: { increment: 1 } } })
+          .catch((e) => console.error("CREDIT UPDATE ERROR:", e));
       })
       .catch((err) => {
         console.error("PROCESS ERROR:", err);
