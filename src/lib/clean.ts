@@ -173,6 +173,7 @@ function collapseRestart(words: Word[], line: Line): Line {
   const n = line.norm;
   if (n.length < 4) return line;
   let last = 0;
+  if (n[1] === n[0]) last = 1; // duplicated first word ("today today...")
   for (let j = 2; j + 1 < n.length; j++) if (n[j] === n[0] && n[j + 1] === n[1]) last = j;
   if (last <= 0) return line;
   // Find the word window matching this line to re-slice with real timestamps.
@@ -191,7 +192,7 @@ function isNearPrefix(a: string[], b: string[]): boolean {
   if (a.length < 2 || a.length >= b.length) return false;
   let m = 0;
   for (let i = 0; i < a.length; i++) if (a[i] === b[i]) m++;
-  return m / a.length >= 0.75;
+  return m / a.length >= 0.6;
 }
 function isCorrectionLine(line: Line): boolean {
   const t = line.norm.join(" ");
@@ -210,7 +211,7 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
     if (i + 1 < lines.length && isNearPrefix(lines[i].norm, lines[i + 1].norm)) {
       const a = lines[i].norm.length;
       const b = lines[i + 1].norm.length;
-      if (!lines[i].term || a < 0.6 * b) continue;
+      if (!lines[i].term || a < 0.85 * b) continue;
     }
     kept.push(lines[i]);
   }
