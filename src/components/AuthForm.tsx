@@ -76,6 +76,13 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
                 placeholder={isSignup ? "At least 6 characters" : "Your password"}
                 className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm outline-none transition focus:border-indigo-400/50"
               />
+              {!isSignup && (
+                <div className="mt-1.5 text-right">
+                  <Link href="/login?reset=1" className="text-xs text-indigo-300 hover:text-indigo-200">
+                    Forgot password?
+                  </Link>
+                </div>
+              )}
             </div>
 
             {error && (
