@@ -87,7 +87,7 @@ export default async function Home() {
           </a>
         </div>
         <p className="animate-fade-up mt-4 text-sm text-white/40">
-          No credit card required · 20-day free trial
+          No credit card required · 5 free edits
         </p>
 
         {/* Mock app preview */}
@@ -186,7 +186,7 @@ export default async function Home() {
             <div className="mt-6 text-4xl font-bold">$0</div>
             <ul className="mt-6 space-y-3 text-sm text-white/70">
               <li>5 free edits</li>
-              <li>20-day trial</li>
+              <li>No credit card needed</li>
               <li>Standard processing</li>
             </ul>
             <Link href="/signup" className="glass mt-8 rounded-xl py-3 text-center font-medium transition hover:text-white">
