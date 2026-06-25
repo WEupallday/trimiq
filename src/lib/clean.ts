@@ -275,8 +275,9 @@ async function renderFinal(
   output: string,
   segs: [number, number][],
   s: Settings,
-  capHeight: number
-): Promise<boolean> {
+  capHeight: number,
+  stepped: boolean
+): Promise<void> {
   const { w: iw, h: ih } = await getDims(input);
   const wide = iw / ih > 9 / 16 + 0.01;
 
@@ -291,14 +292,11 @@ async function renderFinal(
     reframe = `crop=${ow}:${oh}:(iw-${ow})/2:0,`;
   }
 
-  // Safety cap for large uploads: scale the output down so big videos render
-  // fast on a single CPU (keeps aspect ratio). Small clips pass through.
-  let capped = false;
+  // Scale the output down to the resolution ceiling (never upscale).
   if (capHeight && oh > capHeight) {
     const scale = capHeight / oh;
     oh = even(capHeight);
     ow = even(ow * scale);
-    capped = true;
   }
 
   // Per-clip zoom: each kept segment gets a slightly different framing (a gentle
@@ -319,16 +317,16 @@ async function renderFinal(
   segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
   filter += `concat=n=${segs.length}:v=1:a=1[outv][ca]`;
 
-  // Capped (large/long) videos use the fastest preset so they finish quickly on
-  // a single CPU; small clips keep a higher-quality preset. Use all CPU threads.
-  const preset = capped ? "ultrafast" : "veryfast";
-  const crf = capped ? "22" : "18";
+  // Long videos (stepped below 1080p) use the fastest preset so they finish
+  // quickly on one CPU; shorter clips keep a higher-quality preset.
+  const preset = stepped ? "ultrafast" : "veryfast";
+  const crf = stepped ? "22" : "19";
   await run(FFMPEG, [
     "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[ca]",
     "-c:v", "libx264", "-preset", preset, "-crf", crf, "-pix_fmt", "yuv420p", "-threads", "0",
+    "-max_muxing_queue_size", "1024",
     "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", output,
   ]);
-  return capped;
 }
 
 function countCuts(segs: [number, number][], duration: number): number {
@@ -353,12 +351,12 @@ export async function cleanVideo(
 
   const original = await getDuration(input);
 
-  // Render resolution scales down with size/length so big videos finish quickly
-  // on a single CPU. Short clips keep full resolution.
-  const bytes = opts.fileBytes ?? 0;
-  let capHeight = 0;
-  if (original > 150 || bytes > 90 * 1024 * 1024) capHeight = 960; // ~540p, very large
-  else if (original > 75 || bytes > 60 * 1024 * 1024) capHeight = 1280; // 720p
+  // Output never exceeds 1080p (TikTok's max anyway) so 4K sources don't blow up
+  // the encoder. Longer videos step down further so they stay fast on one CPU.
+  let capHeight = 1920; // 1080p ceiling
+  if (original > 240) capHeight = 960; // > 4 min -> 540p
+  else if (original > 90) capHeight = 1280; // > 1.5 min -> 720p
+  const stepped = capHeight < 1920; // reduced below 1080p for a long video
   let segs: [number, number][] = [];
   let mode: "smart" | "audio" = "audio";
   const audioFiles: string[] = [];
@@ -388,7 +386,8 @@ export async function cleanVideo(
   // Nothing to cut -> keep whole clip as one segment (reframe/zoom still apply).
   if (segs.length === 0) segs = [[0, original]];
 
-  const capped = await renderFinal(input, output, segs, settings, capHeight);
+  await renderFinal(input, output, segs, settings, capHeight, stepped);
+  const capped = stepped;
   for (const a of audioFiles) await unlink(a).catch(() => {});
 
   const cleaned = await getDuration(output).catch(() => original);

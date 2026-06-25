@@ -45,3 +45,30 @@ export function createJob(): Job {
 export function getJob(id: string): Job | undefined {
   return jobs.get(id);
 }
+
+// ---- Concurrency gate ------------------------------------------------------
+// On a single CPU we process one video at a time. Extra jobs wait their turn,
+// which keeps memory predictable and avoids overloading the instance when
+// several beta users upload at once.
+const gate = (globalThis as unknown as { __trimiqGate?: { active: number; waiters: Array<() => void> } });
+if (!gate.__trimiqGate) gate.__trimiqGate = { active: 0, waiters: [] };
+const MAX_CONCURRENT = 1;
+
+export async function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const g = gate.__trimiqGate!;
+  if (g.active >= MAX_CONCURRENT) {
+    await new Promise<void>((resolve) => g.waiters.push(resolve));
+  }
+  g.active++;
+  try {
+    return await fn();
+  } finally {
+    g.active--;
+    const next = g.waiters.shift();
+    if (next) next();
+  }
+}
+
+export function queueDepth(): number {
+  return gate.__trimiqGate!.waiters.length;
+}
