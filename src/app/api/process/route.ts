@@ -7,17 +7,49 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { cleanVideo, type EditMode } from "@/lib/clean";
-import { createJob, getJob } from "@/lib/jobs";
+import { createJob, getJob, runExclusive, queueDepth } from "@/lib/jobs";
+import { prisma } from "@/lib/db";
+import { getSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const MODES: EditMode[] = ["light", "balanced", "aggressive"];
 
+// Hard server-side ceiling. Render has no fixed upload cap, but this protects the
+// instance from absurdly large files. The client warns well before this.
+const MAX_BYTES = 600 * 1024 * 1024;
+
+// Store a beta user's rating + comment (POST /api/process?feedback=1).
+async function handleFeedback(req: NextRequest) {
+  try {
+    const { rating, comment } = await req.json();
+    const r = Number(rating);
+    if (!Number.isInteger(r) || r < 1 || r > 5) {
+      return NextResponse.json({ error: "Rating must be between 1 and 5." }, { status: 400 });
+    }
+    const session = await getSession();
+    await prisma.feedback.create({
+      data: {
+        email: session?.email ?? null,
+        rating: r,
+        comment: typeof comment === "string" ? comment.slice(0, 2000) : null,
+      },
+    });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error("FEEDBACK ERROR:", e);
+    return NextResponse.json({ error: "Could not save feedback." }, { status: 500 });
+  }
+}
+
 // POST: receive the upload, start editing in the background, return a job id fast.
 // This keeps the HTTP request only as long as the upload itself (no processing),
 // so it never trips the platform's per-request timeout.
 export async function POST(req: NextRequest) {
+  if (req.nextUrl.searchParams.get("feedback") === "1") {
+    return handleFeedback(req);
+  }
   let inPath = "";
   try {
     if (!req.body) {
@@ -38,13 +70,25 @@ export async function POST(req: NextRequest) {
       await unlink(inPath).catch(() => {});
       return NextResponse.json({ error: "No video received." }, { status: 400 });
     }
+    if (size > MAX_BYTES) {
+      await unlink(inPath).catch(() => {});
+      return NextResponse.json(
+        { error: "That video is too large. Please use a clip under 500 MB (record in 1080p, not 4K)." },
+        { status: 413 }
+      );
+    }
 
     const job = createJob();
     job.inputPath = inPath;
     job.outputPath = outPath;
+    if (queueDepth() > 0) job.stage = "Queued";
 
-    // Fire-and-forget: keeps running on the Node server after we respond.
-    cleanVideo(inPath, outPath, { mode, fileBytes: size })
+    // Fire-and-forget: keeps running on the Node server after we respond. The
+    // gate ensures only one video is processed at a time.
+    runExclusive(() => {
+      job.stage = "Processing";
+      return cleanVideo(inPath, outPath, { mode, fileBytes: size });
+    })
       .then((result) => {
         job.status = "done";
         job.stats = {
