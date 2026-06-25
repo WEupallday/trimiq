@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
   trailOut: 0.18,
   minClipLength: 0.2,
   fade: 0.05,
-  sentenceGap: 0.7,
+  sentenceGap: 0.6,
 };
 
 export type CleanResult = {
@@ -116,6 +116,7 @@ const CORR = new Set(["no", "nope", "wait", "sorry", "scratch", "redo", "actuall
 const CORR_PHRASES = [
   "let me say that again", "let me start over", "let me redo", "start over",
   "one more time", "say that again", "let me try again", "take that again", "do that again",
+  "let me restart", "let me rephrase", "hold on", "wait no", "let me do that again",
 ];
 
 async function extractAudio(input: string): Promise<string> {
@@ -204,8 +205,13 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
   lines = lines.filter((l) => !isCorrectionLine(l)); // remove spoken corrections
   const kept: Line[] = [];
   for (let i = 0; i < lines.length; i++) {
-    // Drop an unfinished line that is just the start of the next one (abandoned take).
-    if (i + 1 < lines.length && !lines[i].term && isNearPrefix(lines[i].norm, lines[i + 1].norm)) continue;
+    // Drop a line that's just the start of the next one (abandoned take) when it's
+    // either unfinished OR much shorter than the take that follows it.
+    if (i + 1 < lines.length && isNearPrefix(lines[i].norm, lines[i + 1].norm)) {
+      const a = lines[i].norm.length;
+      const b = lines[i + 1].norm.length;
+      if (!lines[i].term || a < 0.6 * b) continue;
+    }
     kept.push(lines[i]);
   }
   const ranges = kept
