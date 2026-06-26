@@ -2,11 +2,14 @@ import Link from "next/link";
 import Logo from "@/components/Logo";
 import { getSession } from "@/lib/auth";
 import { ALL_PLANS } from "@/lib/plans";
+import { getLivePrices } from "@/lib/stripe";
 import PricingButton from "@/components/PricingButton";
 
 export default async function Home() {
   const session = await getSession();
   const loggedIn = !!session;
+  // Prices are read live from Stripe — nothing is hardcoded here.
+  const prices = await getLivePrices();
 
   return (
     <main className="relative overflow-hidden">
@@ -183,6 +186,7 @@ export default async function Home() {
         <div className="mt-14 grid items-stretch gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {ALL_PLANS.map((plan) => {
             const popular = plan.id === "pro";
+            const amount = prices[plan.id]?.amount;
             return (
               <div
                 key={plan.id}
@@ -200,8 +204,14 @@ export default async function Home() {
                 <h3 className="text-lg font-semibold">{plan.name}</h3>
                 <p className="mt-1 text-sm text-white/50">{plan.blurb}</p>
                 <div className="mt-6 text-4xl font-bold">
-                  ${plan.price}
-                  {plan.price > 0 && <span className="text-base font-normal text-white/50">/mo</span>}
+                  {amount === null || amount === undefined ? (
+                    <span className="text-2xl font-semibold text-white/50">Coming soon</span>
+                  ) : (
+                    <>
+                      ${amount}
+                      {amount > 0 && <span className="text-base font-normal text-white/50">/mo</span>}
+                    </>
+                  )}
                 </div>
                 <ul className="mt-6 flex-1 space-y-3 text-sm text-white/70">
                   {plan.features.map((f) => (
