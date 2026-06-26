@@ -29,7 +29,12 @@ export async function POST(req: Request) {
           const proto = req.headers.get("x-forwarded-proto") || "https";
           const origin = process.env.APP_URL || (host ? `${proto}://${host}` : new URL(req.url).origin);
           const link = `${origin}/login?token=${raw}`;
+          // Until an email provider is configured, record the link to the server
+          // log so the account owner can recover access.
+          if (!process.env.RESEND_API_KEY) console.log(`[PASSWORD_RESET_LINK] account=${email} link=${link}`);
           await sendEmail(email, "Reset your TrimIQ password", resetEmailHtml(link));
+        } else {
+          console.log(`[PASSWORD_RESET_LINK] no account found for ${email}`);
         }
       }
       // Always succeed so we never reveal whether an account exists.
