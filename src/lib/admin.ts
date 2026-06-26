@@ -5,6 +5,7 @@
 import { prisma } from "./db";
 import { getSession, type Session } from "./auth";
 import { getPlan } from "./plans";
+import { effectiveEditLimit, CREATOR_BETA_EDITS } from "./credits";
 import { jobs, queueDepth } from "./jobs";
 import { getLivePrices } from "./stripe";
 
@@ -37,12 +38,13 @@ const dayStart = () => {
 export async function adminData() {
   const today = dayStart();
 
-  const [users, jobsTotal, jobsToday, jobsFailed, jobAgg, feedback] = await Promise.all([
+  const [users, jobsTotal, jobsToday, jobsFailed, jobAgg, creatorBetaVideos, feedback] = await Promise.all([
     prisma.user.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.processingJob.count(),
     prisma.processingJob.count({ where: { createdAt: { gte: today } } }),
     prisma.processingJob.count({ where: { status: "error" } }),
     prisma.processingJob.aggregate({ _avg: { durationMs: true }, where: { status: "done" } }),
+    prisma.processingJob.count({ where: { creatorBeta: true } }),
     prisma.feedback.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
   ]);
 
@@ -59,6 +61,7 @@ export async function adminData() {
   const canceled = users.filter((u) => u.subscriptionStatus === "canceled").length;
   const paid = users.filter((u) => u.plan !== "free").length;
   const free = users.length - paid;
+  const creatorBetaUsers = users.filter((u) => u.isCreatorBeta).length;
 
   // Live prices straight from Stripe (no hardcoded amounts anywhere).
   const prices = await getLivePrices();
@@ -69,23 +72,25 @@ export async function adminData() {
     .reduce((sum, u) => sum + ((prices as any)[u.plan]?.amount || 0), 0);
 
   return {
-    users: users.map((u) => ({
-      id: u.id,
-      email: u.email,
-      username: u.username,
-      tiktokUsername: u.tiktokUsername,
-      plan: u.plan,
-      planName: getPlan(u.plan).name,
-      editLimit: isFinite(getPlan(u.plan).edits) ? getPlan(u.plan).edits : null,
-      editsUsed: u.editsUsed,
-      creditsLeft: isFinite(getPlan(u.plan).edits)
-        ? Math.max(0, getPlan(u.plan).edits - u.editsUsed)
-        : null,
-      isAdmin: u.isAdmin,
-      suspended: u.suspended,
-      subscriptionStatus: u.subscriptionStatus,
-      createdAt: u.createdAt.toISOString(),
-    })),
+    users: users.map((u) => {
+      const limit = effectiveEditLimit(u.plan, u.isCreatorBeta);
+      return {
+        id: u.id,
+        email: u.email,
+        username: u.username,
+        tiktokUsername: u.tiktokUsername,
+        plan: u.plan,
+        planName: getPlan(u.plan).name,
+        editLimit: isFinite(limit) ? limit : null,
+        editsUsed: u.editsUsed,
+        creditsLeft: isFinite(limit) ? Math.max(0, limit - u.editsUsed) : null,
+        isAdmin: u.isAdmin,
+        isCreatorBeta: u.isCreatorBeta,
+        suspended: u.suspended,
+        subscriptionStatus: u.subscriptionStatus,
+        createdAt: u.createdAt.toISOString(),
+      };
+    }),
     stats: {
       totalUsers: users.length,
       newToday,
@@ -95,6 +100,9 @@ export async function adminData() {
       paid,
       free,
       mrr,
+      creatorBetaUsers,
+      creatorBetaVideos,
+      creatorBetaEdits: CREATOR_BETA_EDITS,
       videosTotal: jobsTotal,
       videosToday: jobsToday,
       videosFailed: jobsFailed,
