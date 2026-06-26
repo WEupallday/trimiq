@@ -125,6 +125,9 @@ export default function AdminDashboard({ data }: { data: any }) {
                     {u.suspended && <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-200">SUSPENDED</span>}
                   </p>
                   <p className="truncate text-sm text-white/50">{u.email}</p>
+                  {u.tiktokUsername && (
+                    <p className="truncate text-xs text-pink-300/80">TikTok @{u.tiktokUsername}</p>
+                  )}
                   <p className="mt-1 text-xs text-white/40">
                     Joined {fmtDate(u.createdAt)} · {u.planName} ·{" "}
                     {u.creditsLeft === null ? "unlimited edits" : `${u.creditsLeft}/${u.editLimit} edits left`}
