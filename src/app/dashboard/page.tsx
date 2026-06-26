@@ -6,7 +6,9 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { creditsLeft, isUnlimited } from "@/lib/credits";
 import { getPlan } from "@/lib/plans";
+import { isAdminEmail } from "@/lib/admin";
 import BillingPanel from "@/components/BillingPanel";
+import AccountSettings from "@/components/AccountSettings";
 import UploadStudio from "./UploadStudio";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +24,8 @@ export default async function DashboardPage() {
   const unlimited = isUnlimited(plan);
   const paid = plan !== "free";
   const renewalISO = user?.currentPeriodEnd ? user.currentPeriodEnd.toISOString() : null;
+  const displayName = user?.username || session.email;
+  const admin = await isAdminEmail(session.email);
 
   return (
     <main className="relative min-h-screen overflow-hidden">
@@ -35,7 +39,12 @@ export default async function DashboardPage() {
             TrimIQ
           </Link>
           <div className="flex items-center gap-3">
-            <span className="hidden text-sm text-white/50 sm:inline">{session.email}</span>
+            <span className="hidden text-sm text-white/50 sm:inline">{displayName}</span>
+            {admin && (
+              <Link href="/admin" className="rounded-lg border border-indigo-400/40 px-3 py-1.5 text-xs font-medium text-indigo-200 transition hover:bg-indigo-500/10">
+                Admin
+              </Link>
+            )}
             <span className="glass rounded-full px-3 py-1.5 text-xs text-white/70">
               {unlimited ? `${planName} plan` : `${planName} · ${credits} ${credits === 1 ? "edit" : "edits"} left`}
             </span>
@@ -60,6 +69,7 @@ export default async function DashboardPage() {
             paid={paid}
             renewalISO={renewalISO}
           />
+          <AccountSettings currentUsername={user?.username ?? ""} email={session.email} />
         </div>
 
         <UploadStudio credits={credits} unlimited={unlimited} />
