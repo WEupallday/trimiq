@@ -20,7 +20,8 @@ export default async function DashboardPage() {
   const user = await prisma.user.findUnique({ where: { email: session.email } });
   const plan = user?.plan ?? "free";
   const planName = getPlan(plan).name;
-  const credits = creditsLeft(plan, user?.editsUsed ?? 0);
+  const creatorBeta = !!user?.isCreatorBeta;
+  const credits = creditsLeft(plan, user?.editsUsed ?? 0, creatorBeta);
   const unlimited = isUnlimited(plan);
   const paid = plan !== "free";
   const renewalISO = user?.currentPeriodEnd ? user.currentPeriodEnd.toISOString() : null;
@@ -40,6 +41,11 @@ export default async function DashboardPage() {
           </Link>
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-white/50 sm:inline">{displayName}</span>
+            {creatorBeta && (
+              <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200">
+                Creator Beta
+              </span>
+            )}
             {admin && (
               <Link href="/admin" className="rounded-lg border border-indigo-400/40 px-3 py-1.5 text-xs font-medium text-indigo-200 transition hover:bg-indigo-500/10">
                 Admin
