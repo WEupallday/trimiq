@@ -69,7 +69,7 @@ export default async function DashboardPage() {
             paid={paid}
             renewalISO={renewalISO}
           />
-          <AccountSettings currentUsername={user?.username ?? ""} email={session.email} />
+          <AccountSettings currentUsername={user?.username ?? ""} email={session.email} currentTiktok={user?.tiktokUsername ?? ""} />
         </div>
 
         <UploadStudio credits={credits} unlimited={unlimited} />
