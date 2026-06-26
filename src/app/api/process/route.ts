@@ -99,6 +99,31 @@ async function handleAccountUsername(req: NextRequest) {
   }
 }
 
+// ----- Account: add / update / remove TikTok username (optional) ------------
+async function handleAccountTiktok(req: NextRequest) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Please log in." }, { status: 401 });
+  try {
+    const { tiktokUsername } = await req.json();
+    // Accept with or without a leading @; empty value clears it.
+    const raw = String(tiktokUsername ?? "").trim().replace(/^@+/, "");
+    if (raw === "") {
+      await prisma.user.update({ where: { email: session.email }, data: { tiktokUsername: null } });
+      return NextResponse.json({ ok: true, tiktokUsername: null });
+    }
+    if (!/^[a-zA-Z0-9._]{2,24}$/.test(raw)) {
+      return NextResponse.json(
+        { error: "Enter a valid TikTok handle (2–24 letters, numbers, periods, or underscores)." },
+        { status: 400 }
+      );
+    }
+    await prisma.user.update({ where: { email: session.email }, data: { tiktokUsername: raw } });
+    return NextResponse.json({ ok: true, tiktokUsername: raw });
+  } catch {
+    return NextResponse.json({ error: "Couldn't update TikTok username." }, { status: 400 });
+  }
+}
+
 function originFrom(req: NextRequest): string {
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
   const proto = req.headers.get("x-forwarded-proto") || "https";
@@ -306,6 +331,7 @@ export async function POST(req: NextRequest) {
   if (stripeAction === "cancel") return handleCancel(req);
   if (req.nextUrl.searchParams.get("admin") === "action") return handleAdminAction(req);
   if (req.nextUrl.searchParams.get("account") === "username") return handleAccountUsername(req);
+  if (req.nextUrl.searchParams.get("account") === "tiktok") return handleAccountTiktok(req);
 
   let inPath = "";
   try {
