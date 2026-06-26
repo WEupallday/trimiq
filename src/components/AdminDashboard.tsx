@@ -20,6 +20,7 @@ function fmtPrice(a: number | null | undefined) {
 export default function AdminDashboard({ data }: { data: any }) {
   const router = useRouter();
   const [q, setQ] = useState("");
+  const [cbOnly, setCbOnly] = useState(false);
   const [busyId, setBusyId] = useState("");
   const s = data.stats;
 
@@ -47,6 +48,7 @@ export default function AdminDashboard({ data }: { data: any }) {
   }
 
   const users = (data.users as any[]).filter((u) => {
+    if (cbOnly && !u.isCreatorBeta) return false;
     const t = q.trim().toLowerCase();
     if (!t) return true;
     return (u.username || "").toLowerCase().includes(t) || u.email.toLowerCase().includes(t);
@@ -65,6 +67,7 @@ export default function AdminDashboard({ data }: { data: any }) {
           <Stat label="Trials" value={s.trialing} />
           <Stat label="Canceled" value={s.canceled} />
           <Stat label="MRR" value={`$${s.mrr}`} accent />
+          <Stat label="Creator Beta" value={s.creatorBetaUsers} accent />
         </Grid>
         <p className="mt-3 text-xs text-white/40">
           Live Stripe pricing — Starter {fmtPrice(s.pricing?.starter)} · Pro {fmtPrice(s.pricing?.pro)} · Unlimited {fmtPrice(s.pricing?.unlimited)} /mo
@@ -78,7 +81,11 @@ export default function AdminDashboard({ data }: { data: any }) {
           <Stat label="Processed today" value={s.videosToday} accent />
           <Stat label="Avg processing" value={`${(s.avgProcessingMs / 1000).toFixed(1)}s`} />
           <Stat label="Failed jobs" value={s.videosFailed} />
+          <Stat label="Creator Beta videos" value={s.creatorBetaVideos} accent />
         </Grid>
+        <p className="mt-3 text-xs text-white/40">
+          Creator Beta = invited creator testers (separate from the free trial). Each gets {s.creatorBetaEdits} free edits.
+        </p>
       </Section>
 
       {/* System */}
@@ -108,12 +115,24 @@ export default function AdminDashboard({ data }: { data: any }) {
 
       {/* Users */}
       <Section title={`Users (${data.users.length})`}>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search by username or email…"
-          className="mb-4 w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm outline-none transition focus:border-indigo-400/50 sm:max-w-sm"
-        />
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by username or email…"
+            className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm outline-none transition focus:border-indigo-400/50 sm:max-w-sm"
+          />
+          <button
+            onClick={() => setCbOnly((v) => !v)}
+            className={`rounded-xl border px-3 py-2.5 text-xs font-medium transition ${
+              cbOnly
+                ? "border-amber-400/50 bg-amber-500/15 text-amber-200"
+                : "border-white/10 text-white/60 hover:text-white"
+            }`}
+          >
+            Creator Beta only
+          </button>
+        </div>
         <div className="space-y-2">
           {users.map((u) => (
             <div key={u.id} className="glass rounded-xl p-4">
@@ -122,6 +141,7 @@ export default function AdminDashboard({ data }: { data: any }) {
                   <p className="font-medium">
                     {u.username || <span className="text-white/40">no username</span>}
                     {u.isAdmin && <span className="ml-2 rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] text-indigo-200">ADMIN</span>}
+                    {u.isCreatorBeta && <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-200">CREATOR BETA</span>}
                     {u.suspended && <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-200">SUSPENDED</span>}
                   </p>
                   <p className="truncate text-sm text-white/50">{u.email}</p>
@@ -152,6 +172,11 @@ export default function AdminDashboard({ data }: { data: any }) {
                   )}
                   {u.subscriptionStatus === "active" && u.plan !== "free" && (
                     <Btn onClick={() => act(u.id, "migratePricing")} disabled={busyId === u.id}>Migrate pricing</Btn>
+                  )}
+                  {u.isCreatorBeta ? (
+                    <Btn onClick={() => act(u.id, "unmarkCreatorBeta")} disabled={busyId === u.id}>Remove Creator Beta</Btn>
+                  ) : (
+                    <Btn onClick={() => act(u.id, "markCreatorBeta")} disabled={busyId === u.id}>Make Creator Beta</Btn>
                   )}
                   <Btn danger onClick={() => act(u.id, "delete")} disabled={busyId === u.id}>Delete</Btn>
                 </div>
