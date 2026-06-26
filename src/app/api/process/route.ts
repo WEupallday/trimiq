@@ -36,6 +36,10 @@ async function handleAdminAction(req: NextRequest) {
       await prisma.user.update({ where: { id: userId }, data: { suspended: true } });
     } else if (action === "unsuspend") {
       await prisma.user.update({ where: { id: userId }, data: { suspended: false } });
+    } else if (action === "markCreatorBeta") {
+      await prisma.user.update({ where: { id: userId }, data: { isCreatorBeta: true } });
+    } else if (action === "unmarkCreatorBeta") {
+      await prisma.user.update({ where: { id: userId }, data: { isCreatorBeta: false } });
     } else if (action === "delete") {
       await prisma.user.delete({ where: { id: userId } });
     } else if (action === "migratePricing") {
@@ -347,7 +351,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "This account is suspended. Please contact support." }, { status: 403 });
     }
     const plan = user?.plan ?? "free";
-    if (creditsLeft(plan, user?.editsUsed ?? 0) <= 0) {
+    if (creditsLeft(plan, user?.editsUsed ?? 0, user?.isCreatorBeta) <= 0) {
       return NextResponse.json(
         { error: "You've used all your free edits. Upgrade to keep editing.", outOfCredits: true },
         { status: 402 }
@@ -400,7 +404,7 @@ export async function POST(req: NextRequest) {
           .update({ where: { email: session.email }, data: { editsUsed: { increment: 1 } } })
           .catch((e) => console.error("CREDIT UPDATE ERROR:", e));
         await prisma.processingJob
-          .create({ data: { email: session.email, name: originalName, status: "done", durationMs: Date.now() - startedAt } })
+          .create({ data: { email: session.email, name: originalName, status: "done", durationMs: Date.now() - startedAt, creatorBeta: !!user?.isCreatorBeta } })
           .catch(() => {});
       })
       .catch(async (err) => {
@@ -408,7 +412,7 @@ export async function POST(req: NextRequest) {
         job.status = "error";
         job.error = friendlyError(err);
         await prisma.processingJob
-          .create({ data: { email: session.email, name: originalName, status: "error", durationMs: Date.now() - startedAt, error: job.error } })
+          .create({ data: { email: session.email, name: originalName, status: "error", durationMs: Date.now() - startedAt, error: job.error, creatorBeta: !!user?.isCreatorBeta } })
           .catch(() => {});
       })
       .finally(() => {
