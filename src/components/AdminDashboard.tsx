@@ -13,6 +13,10 @@ function fmtDate(iso: string) {
   }
 }
 
+function fmtPrice(a: number | null | undefined) {
+  return a === null || a === undefined ? "—" : `$${a}`;
+}
+
 export default function AdminDashboard({ data }: { data: any }) {
   const router = useRouter();
   const [q, setQ] = useState("");
@@ -21,13 +25,20 @@ export default function AdminDashboard({ data }: { data: any }) {
 
   async function act(userId: string, action: string, plan?: string) {
     if (action === "delete" && !confirm("Permanently delete this user?")) return;
+    if (
+      action === "migratePricing" &&
+      !confirm("Switch this subscriber onto the current Stripe price for their plan? No proration — the new amount applies from their next renewal.")
+    )
+      return;
     setBusyId(userId);
     try {
-      await fetch("/api/process?admin=action", {
+      const res = await fetch("/api/process?admin=action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, userId, plan }),
       });
+      const body = await res.json().catch(() => ({}));
+      if (action === "migratePricing") alert(body.message || body.error || "Done.");
       router.refresh();
     } catch {
       /* ignore */
@@ -55,6 +66,9 @@ export default function AdminDashboard({ data }: { data: any }) {
           <Stat label="Canceled" value={s.canceled} />
           <Stat label="MRR" value={`$${s.mrr}`} accent />
         </Grid>
+        <p className="mt-3 text-xs text-white/40">
+          Live Stripe pricing — Starter {fmtPrice(s.pricing?.starter)} · Pro {fmtPrice(s.pricing?.pro)} · Unlimited {fmtPrice(s.pricing?.unlimited)} /mo
+        </p>
       </Section>
 
       {/* Video analytics */}
@@ -132,6 +146,9 @@ export default function AdminDashboard({ data }: { data: any }) {
                     <Btn onClick={() => act(u.id, "unsuspend")} disabled={busyId === u.id}>Unsuspend</Btn>
                   ) : (
                     <Btn onClick={() => act(u.id, "suspend")} disabled={busyId === u.id}>Suspend</Btn>
+                  )}
+                  {u.subscriptionStatus === "active" && u.plan !== "free" && (
+                    <Btn onClick={() => act(u.id, "migratePricing")} disabled={busyId === u.id}>Migrate pricing</Btn>
                   )}
                   <Btn danger onClick={() => act(u.id, "delete")} disabled={busyId === u.id}>Delete</Btn>
                 </div>
