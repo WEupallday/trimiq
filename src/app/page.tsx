@@ -1,6 +1,8 @@
 import Link from "next/link";
 import Logo from "@/components/Logo";
 import { getSession } from "@/lib/auth";
+import { ALL_PLANS } from "@/lib/plans";
+import PricingButton from "@/components/PricingButton";
 
 export default async function Home() {
   const session = await getSession();
@@ -178,58 +180,43 @@ export default async function Home() {
           <p className="mt-4 text-white/60">Start free. Upgrade when you&apos;re ready to scale.</p>
         </div>
 
-        <div className="mt-14 grid items-stretch gap-6 lg:grid-cols-3">
-          {/* Free */}
-          <div className="glass flex flex-col rounded-2xl p-8">
-            <h3 className="text-lg font-semibold">Free</h3>
-            <p className="mt-1 text-sm text-white/50">Try it out</p>
-            <div className="mt-6 text-4xl font-bold">$0</div>
-            <ul className="mt-6 space-y-3 text-sm text-white/70">
-              <li>5 free edits</li>
-              <li>No credit card needed</li>
-              <li>Standard processing</li>
-            </ul>
-            <Link href="/signup" className="glass mt-8 rounded-xl py-3 text-center font-medium transition hover:text-white">
-              Get started
-            </Link>
-          </div>
-
-          {/* Creator (highlighted) */}
-          <div className="relative flex flex-col rounded-2xl border border-indigo-400/40 bg-gradient-to-b from-indigo-500/10 to-transparent p-8 shadow-xl shadow-indigo-500/10">
-            <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-3 py-1 text-xs font-medium">
-              Most popular
-            </span>
-            <h3 className="text-lg font-semibold">Creator</h3>
-            <p className="mt-1 text-sm text-white/50">For active sellers</p>
-            <div className="mt-6 text-4xl font-bold">
-              $29<span className="text-base font-normal text-white/50">/mo</span>
-            </div>
-            <ul className="mt-6 space-y-3 text-sm text-white/70">
-              <li>100 edits / month</li>
-              <li>Faster processing</li>
-              <li>Higher upload limits</li>
-            </ul>
-            <Link href="/signup" className="mt-8 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center font-medium transition hover:opacity-90">
-              Choose Creator
-            </Link>
-          </div>
-
-          {/* Unlimited */}
-          <div className="glass flex flex-col rounded-2xl p-8">
-            <h3 className="text-lg font-semibold">Unlimited</h3>
-            <p className="mt-1 text-sm text-white/50">For power users</p>
-            <div className="mt-6 text-4xl font-bold">
-              $49<span className="text-base font-normal text-white/50">/mo</span>
-            </div>
-            <ul className="mt-6 space-y-3 text-sm text-white/70">
-              <li>Unlimited edits (fair use)</li>
-              <li>Highest priority processing</li>
-              <li>Higher upload limits</li>
-            </ul>
-            <Link href="/signup" className="glass mt-8 rounded-xl py-3 text-center font-medium transition hover:text-white">
-              Choose Unlimited
-            </Link>
-          </div>
+        <div className="mt-14 grid items-stretch gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {ALL_PLANS.map((plan) => {
+            const popular = plan.id === "pro";
+            return (
+              <div
+                key={plan.id}
+                className={`relative flex flex-col rounded-2xl p-7 ${
+                  popular
+                    ? "border border-indigo-400/40 bg-gradient-to-b from-indigo-500/10 to-transparent shadow-xl shadow-indigo-500/10"
+                    : "glass"
+                }`}
+              >
+                {popular && (
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-3 py-1 text-xs font-medium">
+                    Most popular
+                  </span>
+                )}
+                <h3 className="text-lg font-semibold">{plan.name}</h3>
+                <p className="mt-1 text-sm text-white/50">{plan.blurb}</p>
+                <div className="mt-6 text-4xl font-bold">
+                  ${plan.price}
+                  {plan.price > 0 && <span className="text-base font-normal text-white/50">/mo</span>}
+                </div>
+                <ul className="mt-6 flex-1 space-y-3 text-sm text-white/70">
+                  {plan.features.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+                <PricingButton
+                  planId={plan.id}
+                  loggedIn={loggedIn}
+                  highlight={popular}
+                  label={plan.id === "free" ? "Get started" : `Choose ${plan.name}`}
+                />
+              </div>
+            );
+          })}
         </div>
       </section>
 
