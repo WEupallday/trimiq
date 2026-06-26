@@ -8,6 +8,7 @@ import Logo from "@/components/Logo";
 export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -22,7 +23,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
       const res = await fetch(`/api/auth/${isSignup ? "signup" : "login"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(isSignup ? { email, password, username } : { email, password }),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({ error: "Something went wrong." }));
@@ -55,6 +56,19 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
           </p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
+            {isSignup && (
+              <div>
+                <label className="mb-1.5 block text-sm text-white/70">Username</label>
+                <input
+                  type="text"
+                  required
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="yourname"
+                  className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm outline-none transition focus:border-indigo-400/50"
+                />
+              </div>
+            )}
             <div>
               <label className="mb-1.5 block text-sm text-white/70">Email</label>
               <input
