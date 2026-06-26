@@ -5,6 +5,8 @@ import LogoutButton from "@/components/LogoutButton";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { creditsLeft, isUnlimited } from "@/lib/credits";
+import { getPlan } from "@/lib/plans";
+import BillingPanel from "@/components/BillingPanel";
 import UploadStudio from "./UploadStudio";
 
 export const dynamic = "force-dynamic";
@@ -15,8 +17,11 @@ export default async function DashboardPage() {
 
   const user = await prisma.user.findUnique({ where: { email: session.email } });
   const plan = user?.plan ?? "free";
+  const planName = getPlan(plan).name;
   const credits = creditsLeft(plan, user?.editsUsed ?? 0);
   const unlimited = isUnlimited(plan);
+  const paid = plan !== "free";
+  const renewalISO = user?.currentPeriodEnd ? user.currentPeriodEnd.toISOString() : null;
 
   return (
     <main className="relative min-h-screen overflow-hidden">
@@ -32,7 +37,7 @@ export default async function DashboardPage() {
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-white/50 sm:inline">{session.email}</span>
             <span className="glass rounded-full px-3 py-1.5 text-xs text-white/70">
-              {unlimited ? `${plan} plan` : `Free plan · ${credits} ${credits === 1 ? "edit" : "edits"} left`}
+              {unlimited ? `${planName} plan` : `${planName} · ${credits} ${credits === 1 ? "edit" : "edits"} left`}
             </span>
             <LogoutButton />
           </div>
@@ -45,6 +50,16 @@ export default async function DashboardPage() {
           <p className="mt-3 text-white/60">
             Upload your raw clip and TrimIQ removes the dead space automatically.
           </p>
+        </div>
+
+        <div className="mx-auto max-w-2xl">
+          <BillingPanel
+            planName={planName}
+            creditsLeft={credits}
+            unlimited={unlimited}
+            paid={paid}
+            renewalISO={renewalISO}
+          />
         </div>
 
         <UploadStudio credits={credits} unlimited={unlimited} />
