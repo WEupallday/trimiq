@@ -11,14 +11,27 @@ datasource db {
 model User {
   id                   String    @id @default(cuid())
   email                String    @unique
+  username             String?   @unique
   passwordHash         String
   plan                 String    @default("free")
   editsUsed            Int       @default(0)
+  isAdmin              Boolean   @default(false)
+  suspended            Boolean   @default(false)
   stripeCustomerId     String?
   stripeSubscriptionId String?
   subscriptionStatus   String?
   currentPeriodEnd     DateTime?
   createdAt            DateTime  @default(now())
+}
+
+model ProcessingJob {
+  id         String   @id @default(cuid())
+  email      String
+  name       String
+  status     String // "done" | "error"
+  durationMs Int      @default(0)
+  error      String?
+  createdAt  DateTime @default(now())
 }
 
 model Feedback {
