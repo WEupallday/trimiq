@@ -1,13 +1,12 @@
-// Free-trial credit accounting. Paid plans are unmetered for now (payments come
-// later); the free plan gets a fixed number of edits.
-export const FREE_EDIT_LIMIT = 5;
-const UNMETERED = 999999;
+// Credit accounting, now driven by the subscription plan's monthly edit limit.
+import { editLimitFor } from "./plans";
 
 export function creditsLeft(plan: string, editsUsed: number): number {
-  if (plan !== "free") return UNMETERED;
-  return Math.max(0, FREE_EDIT_LIMIT - editsUsed);
+  const limit = editLimitFor(plan);
+  if (!isFinite(limit)) return Number.MAX_SAFE_INTEGER;
+  return Math.max(0, limit - editsUsed);
 }
 
 export function isUnlimited(plan: string): boolean {
-  return plan !== "free";
+  return !isFinite(editLimitFor(plan));
 }
