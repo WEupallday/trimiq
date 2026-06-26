@@ -30,31 +30,41 @@ async function handleCheckout(req: NextRequest) {
   try {
   const { planId } = await req.json().catch(() => ({ planId: "" }));
   const plan = getPlan(planId);
-  const user = await prisma.user.findUnique({ where: { email: session.email } });
 
-  // Downgrade to free = cancel any active subscription.
+  // Use Stripe's live list of subscriptions as the source of truth. This makes
+  // duplicate active subscriptions impossible even if the DB is briefly stale.
+  const customer = await getOrCreateCustomer(stripe, session.email);
+  const actives = await stripe.subscriptions.list({ customer, status: "active", limit: 10 });
+
+  // Downgrade to Free = cancel every active subscription at period end.
   if (plan.id === "free") {
-    if (user?.stripeSubscriptionId) {
-      await stripe.subscriptions.update(user.stripeSubscriptionId, { cancel_at_period_end: true } as any);
+    for (const s of actives.data) {
+      await stripe.subscriptions.update(s.id, { cancel_at_period_end: true } as any);
     }
-    return NextResponse.json({ ok: true, message: "Your plan will switch to Free at the end of the period." });
+    return NextResponse.json({ ok: true, message: "Your plan will switch to Free at the end of the current period." });
   }
 
   const priceId = await priceIdFor(stripe, plan.id as PlanId);
 
-  // Already subscribed -> change the plan in place (upgrade/downgrade).
-  if (user?.stripeSubscriptionId && user.subscriptionStatus === "active") {
-    const sub: any = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
-    await stripe.subscriptions.update(user.stripeSubscriptionId, {
+  // Already subscribed -> change the existing subscription in place (no new one).
+  if (actives.data.length > 0) {
+    const sub: any = actives.data[0];
+    const updated: any = await stripe.subscriptions.update(sub.id, {
       items: [{ id: sub.items.data[0].id, price: priceId }],
       proration_behavior: "create_prorations",
+      cancel_at_period_end: false, // reactivate if a cancel was pending
       metadata: { planId: plan.id, email: session.email },
     } as any);
+    // Guarantee a single active subscription: cancel any extras.
+    for (const extra of actives.data.slice(1)) {
+      await (stripe.subscriptions as any).cancel(extra.id).catch(() => {});
+    }
+    // Sync the DB right away so the dashboard reflects the new plan immediately.
+    await syncSubscription(updated, false);
     return NextResponse.json({ changed: true, message: `Switched to ${plan.name}.` });
   }
 
-  // New subscription -> Stripe Checkout.
-  const customer = await getOrCreateCustomer(stripe, session.email);
+  // No active subscription -> start Stripe Checkout for a new one.
   const origin = originFrom(req);
   const checkout = await stripe.checkout.sessions.create({
     mode: "subscription",
@@ -82,12 +92,15 @@ async function handleCancel(req: NextRequest) {
   if (!stripe) return NextResponse.json({ error: "Billing isn't set up yet." }, { status: 503 });
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Please log in first." }, { status: 401 });
-  const user = await prisma.user.findUnique({ where: { email: session.email } });
-  if (!user?.stripeSubscriptionId) {
-    return NextResponse.json({ error: "No active subscription to cancel." }, { status: 400 });
-  }
   try {
-    await stripe.subscriptions.update(user.stripeSubscriptionId, { cancel_at_period_end: true } as any);
+    const customer = await getOrCreateCustomer(stripe, session.email);
+    const actives = await stripe.subscriptions.list({ customer, status: "active", limit: 10 });
+    if (actives.data.length === 0) {
+      return NextResponse.json({ error: "No active subscription to cancel." }, { status: 400 });
+    }
+    for (const s of actives.data) {
+      await stripe.subscriptions.update(s.id, { cancel_at_period_end: true } as any);
+    }
     return NextResponse.json({ ok: true, message: "Your subscription will end at the close of the current period." });
   } catch (e: any) {
     console.error("CANCEL ERROR:", e?.message || e);
