@@ -73,6 +73,7 @@ export async function adminData() {
       id: u.id,
       email: u.email,
       username: u.username,
+      tiktokUsername: u.tiktokUsername,
       plan: u.plan,
       planName: getPlan(u.plan).name,
       editLimit: isFinite(getPlan(u.plan).edits) ? getPlan(u.plan).edits : null,
