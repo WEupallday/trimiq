@@ -11,6 +11,125 @@ import { createJob, getJob, listJobs, removeJob, runExclusive } from "@/lib/jobs
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { creditsLeft } from "@/lib/credits";
+import { getStripe, priceIdFor, getOrCreateCustomer, syncSubscription } from "@/lib/stripe";
+import { getPlan, type PlanId } from "@/lib/plans";
+
+function originFrom(req: NextRequest): string {
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  return process.env.APP_URL || (host ? `${proto}://${host}` : req.nextUrl.origin);
+}
+
+// ----- Stripe: create checkout / change plan -------------------------------
+async function handleCheckout(req: NextRequest) {
+  const stripe = getStripe();
+  if (!stripe) return NextResponse.json({ error: "Billing isn't set up yet." }, { status: 503 });
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Please log in first." }, { status: 401 });
+
+  const { planId } = await req.json().catch(() => ({ planId: "" }));
+  const plan = getPlan(planId);
+  const user = await prisma.user.findUnique({ where: { email: session.email } });
+
+  // Downgrade to free = cancel any active subscription.
+  if (plan.id === "free") {
+    if (user?.stripeSubscriptionId) {
+      await stripe.subscriptions.update(user.stripeSubscriptionId, { cancel_at_period_end: true } as any);
+    }
+    return NextResponse.json({ ok: true, message: "Your plan will switch to Free at the end of the period." });
+  }
+
+  const priceId = await priceIdFor(stripe, plan.id as PlanId);
+
+  // Already subscribed -> change the plan in place (upgrade/downgrade).
+  if (user?.stripeSubscriptionId && user.subscriptionStatus === "active") {
+    const sub: any = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+    await stripe.subscriptions.update(user.stripeSubscriptionId, {
+      items: [{ id: sub.items.data[0].id, price: priceId }],
+      proration_behavior: "create_prorations",
+      metadata: { planId: plan.id, email: session.email },
+    } as any);
+    return NextResponse.json({ changed: true, message: `Switched to ${plan.name}.` });
+  }
+
+  // New subscription -> Stripe Checkout.
+  const customer = await getOrCreateCustomer(stripe, session.email);
+  const origin = originFrom(req);
+  const checkout = await stripe.checkout.sessions.create({
+    mode: "subscription",
+    customer,
+    line_items: [{ price: priceId, quantity: 1 }],
+    subscription_data: { metadata: { planId: plan.id, email: session.email } },
+    metadata: { planId: plan.id, email: session.email },
+    success_url: `${origin}/dashboard?upgraded=1`,
+    cancel_url: `${origin}/#pricing`,
+    allow_promotion_codes: true,
+  } as any);
+  return NextResponse.json({ url: checkout.url });
+}
+
+async function handleCancel(req: NextRequest) {
+  const stripe = getStripe();
+  if (!stripe) return NextResponse.json({ error: "Billing isn't set up yet." }, { status: 503 });
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Please log in first." }, { status: 401 });
+  const user = await prisma.user.findUnique({ where: { email: session.email } });
+  if (!user?.stripeSubscriptionId) {
+    return NextResponse.json({ error: "No active subscription to cancel." }, { status: 400 });
+  }
+  await stripe.subscriptions.update(user.stripeSubscriptionId, { cancel_at_period_end: true } as any);
+  return NextResponse.json({ ok: true, message: "Your subscription will end at the close of the current period." });
+}
+
+// ----- Stripe: webhook (keeps the DB in sync with payments) ----------------
+async function handleWebhook(req: NextRequest) {
+  const stripe = getStripe();
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!stripe || !secret) return NextResponse.json({ error: "Webhook not configured." }, { status: 503 });
+
+  const raw = await req.text();
+  const sig = req.headers.get("stripe-signature") || "";
+  let event: any;
+  try {
+    event = stripe.webhooks.constructEvent(raw, sig, secret);
+  } catch (e) {
+    console.error("WEBHOOK SIGNATURE ERROR:", e);
+    return NextResponse.json({ error: "Bad signature." }, { status: 400 });
+  }
+
+  try {
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const s = event.data.object;
+        if (s.subscription) {
+          const sub: any = await stripe.subscriptions.retrieve(s.subscription);
+          if (!sub.metadata?.email && s.metadata?.email) sub.metadata = s.metadata;
+          await syncSubscription(sub, true);
+        }
+        break;
+      }
+      case "customer.subscription.updated": {
+        await syncSubscription(event.data.object, false);
+        break;
+      }
+      case "customer.subscription.deleted": {
+        await syncSubscription(event.data.object, false);
+        break;
+      }
+      case "invoice.paid": {
+        const inv = event.data.object;
+        if (inv.subscription) {
+          const sub: any = await stripe.subscriptions.retrieve(inv.subscription);
+          await syncSubscription(sub, true);
+        }
+        break;
+      }
+    }
+  } catch (e) {
+    console.error("WEBHOOK HANDLER ERROR:", e);
+  }
+  return NextResponse.json({ received: true });
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -63,6 +182,11 @@ export async function POST(req: NextRequest) {
   if (req.nextUrl.searchParams.get("feedback") === "1") {
     return handleFeedback(req);
   }
+  const stripeAction = req.nextUrl.searchParams.get("stripe");
+  if (stripeAction === "webhook") return handleWebhook(req);
+  if (stripeAction === "checkout") return handleCheckout(req);
+  if (stripeAction === "cancel") return handleCancel(req);
+
   let inPath = "";
   try {
     if (!req.body) {
