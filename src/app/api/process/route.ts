@@ -13,6 +13,61 @@ import { getSession } from "@/lib/auth";
 import { creditsLeft } from "@/lib/credits";
 import { getStripe, priceIdFor, getOrCreateCustomer, syncSubscription } from "@/lib/stripe";
 import { getPlan, type PlanId } from "@/lib/plans";
+import { requireAdmin, adminData } from "@/lib/admin";
+
+// ----- Admin: dashboard data + actions -------------------------------------
+async function handleAdminData() {
+  const admin = await requireAdmin();
+  if (!admin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+  return NextResponse.json(await adminData());
+}
+
+async function handleAdminAction(req: NextRequest) {
+  const admin = await requireAdmin();
+  if (!admin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+  try {
+    const { action, userId, plan } = await req.json();
+    if (!userId) return NextResponse.json({ error: "Missing user." }, { status: 400 });
+    if (action === "resetCredits") {
+      await prisma.user.update({ where: { id: userId }, data: { editsUsed: 0 } });
+    } else if (action === "setPlan") {
+      await prisma.user.update({ where: { id: userId }, data: { plan: getPlan(plan).id, editsUsed: 0 } });
+    } else if (action === "suspend") {
+      await prisma.user.update({ where: { id: userId }, data: { suspended: true } });
+    } else if (action === "unsuspend") {
+      await prisma.user.update({ where: { id: userId }, data: { suspended: false } });
+    } else if (action === "delete") {
+      await prisma.user.delete({ where: { id: userId } });
+    } else {
+      return NextResponse.json({ error: "Unknown action." }, { status: 400 });
+    }
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    console.error("ADMIN ACTION ERROR:", e);
+    return NextResponse.json({ error: e?.message || "Action failed." }, { status: 400 });
+  }
+}
+
+// ----- Account: change username --------------------------------------------
+async function handleAccountUsername(req: NextRequest) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Please log in." }, { status: 401 });
+  try {
+    const { username } = await req.json();
+    const u = String(username || "").trim();
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(u)) {
+      return NextResponse.json({ error: "Username must be 3–20 letters, numbers, or underscores." }, { status: 400 });
+    }
+    const existing = await prisma.user.findUnique({ where: { username: u } });
+    if (existing && existing.email !== session.email) {
+      return NextResponse.json({ error: "That username is taken." }, { status: 409 });
+    }
+    await prisma.user.update({ where: { email: session.email }, data: { username: u } });
+    return NextResponse.json({ ok: true, username: u });
+  } catch {
+    return NextResponse.json({ error: "Couldn't update username." }, { status: 400 });
+  }
+}
 
 function originFrom(req: NextRequest): string {
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
@@ -213,6 +268,8 @@ export async function POST(req: NextRequest) {
   if (stripeAction === "webhook") return handleWebhook(req);
   if (stripeAction === "checkout") return handleCheckout(req);
   if (stripeAction === "cancel") return handleCancel(req);
+  if (req.nextUrl.searchParams.get("admin") === "action") return handleAdminAction(req);
+  if (req.nextUrl.searchParams.get("account") === "username") return handleAccountUsername(req);
 
   let inPath = "";
   try {
@@ -224,6 +281,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Your session expired. Please log in again." }, { status: 401 });
     }
     const user = await prisma.user.findUnique({ where: { email: session.email } });
+    if (user?.suspended) {
+      return NextResponse.json({ error: "This account is suspended. Please contact support." }, { status: 403 });
+    }
     const plan = user?.plan ?? "free";
     if (creditsLeft(plan, user?.editsUsed ?? 0) <= 0) {
       return NextResponse.json(
@@ -259,6 +319,7 @@ export async function POST(req: NextRequest) {
     const job = createJob(session.email, originalName);
     job.inputPath = inPath;
     job.outputPath = outPath;
+    const startedAt = Date.now();
 
     runExclusive(() =>
       cleanVideo(inPath, outPath, { mode, fileBytes: size, onStage: (s) => (job.stage = s) })
@@ -276,11 +337,17 @@ export async function POST(req: NextRequest) {
         await prisma.user
           .update({ where: { email: session.email }, data: { editsUsed: { increment: 1 } } })
           .catch((e) => console.error("CREDIT UPDATE ERROR:", e));
+        await prisma.processingJob
+          .create({ data: { email: session.email, name: originalName, status: "done", durationMs: Date.now() - startedAt } })
+          .catch(() => {});
       })
-      .catch((err) => {
+      .catch(async (err) => {
         console.error("PROCESS ERROR:", err);
         job.status = "error";
         job.error = friendlyError(err);
+        await prisma.processingJob
+          .create({ data: { email: session.email, name: originalName, status: "error", durationMs: Date.now() - startedAt, error: job.error } })
+          .catch(() => {});
       })
       .finally(() => {
         unlink(inPath).catch(() => {});
@@ -300,6 +367,9 @@ export async function POST(req: NextRequest) {
 // GET: poll a job, download a finished video, or list the user's recent projects.
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
+
+  // Admin dashboard data.
+  if (params.get("admin") === "data") return handleAdminData();
 
   // List recent projects for the logged-in user.
   if (params.get("list") === "1") {
