@@ -4,8 +4,9 @@
 // like "admin" grants nothing.
 import { prisma } from "./db";
 import { getSession, type Session } from "./auth";
-import { getPlan, PLANS } from "./plans";
+import { getPlan } from "./plans";
 import { jobs, queueDepth } from "./jobs";
+import { getLivePrices } from "./stripe";
 
 export function adminEmails(): string[] {
   return (process.env.ADMIN_EMAILS || "")
@@ -59,10 +60,13 @@ export async function adminData() {
   const paid = users.filter((u) => u.plan !== "free").length;
   const free = users.length - paid;
 
-  // MRR: sum of monthly price for users with an active paid subscription.
+  // Live prices straight from Stripe (no hardcoded amounts anywhere).
+  const prices = await getLivePrices();
+
+  // MRR: sum of the live monthly price for users with an active paid subscription.
   const mrr = users
     .filter((u) => u.subscriptionStatus === "active" && u.plan !== "free")
-    .reduce((sum, u) => sum + (getPlan(u.plan).price || 0), 0);
+    .reduce((sum, u) => sum + ((prices as any)[u.plan]?.amount || 0), 0);
 
   return {
     users: users.map((u) => ({
@@ -94,7 +98,12 @@ export async function adminData() {
       videosToday: jobsToday,
       videosFailed: jobsFailed,
       avgProcessingMs: Math.round(jobAgg._avg.durationMs || 0),
-      planPrices: Object.fromEntries(Object.values(PLANS).map((p) => [p.id, p.price])),
+      pricing: {
+        starter: prices.starter.amount,
+        pro: prices.pro.amount,
+        unlimited: prices.unlimited.amount,
+        currency: prices.pro.currency || "usd",
+      },
     },
     system: {
       status: "online",

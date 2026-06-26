@@ -1,9 +1,13 @@
-// Stripe billing helpers. Everything is keyed off STRIPE_SECRET_KEY (test mode).
-// Products/prices are created on demand (idempotent via lookup_key), so no manual
-// Stripe dashboard setup is required beyond providing the API keys.
+// Stripe billing helpers.
+//
+// PRICING IS 100% STRIPE-DRIVEN. Each paid plan's price lives in Stripe and is
+// referenced by a Price ID stored in an environment variable:
+//   STRIPE_PRICE_STARTER, STRIPE_PRICE_PRO, STRIPE_PRICE_UNLIMITED
+// Nothing in this codebase hardcodes a dollar amount. To change a price, change
+// it in Stripe (or repoint the env var) — no deploy needed.
 import Stripe from "stripe";
 import { prisma } from "./db";
-import { getPlan, type PlanId } from "./plans";
+import { priceEnvVarFor, PAID_PLAN_IDS, type PlanId } from "./plans";
 
 let _stripe: Stripe | null = null;
 
@@ -15,30 +19,67 @@ export function getStripe(): Stripe | null {
   return _stripe;
 }
 
-const priceCache: Record<string, string> = {};
+// The Stripe Price ID configured for a plan (from its env var). null = not set.
+export function priceIdForPlan(planId: string | null | undefined): string | null {
+  const envVar = priceEnvVarFor(planId);
+  if (!envVar) return null;
+  const id = (process.env[envVar] || "").trim();
+  return id || null;
+}
 
-// Ensure a recurring monthly Price exists for a paid plan; return its id.
-export async function priceIdFor(stripe: Stripe, planId: PlanId): Promise<string> {
-  const plan = getPlan(planId);
-  if (priceCache[plan.lookupKey]) return priceCache[plan.lookupKey];
+// Reverse lookup: which plan does a given Stripe Price ID belong to?
+export function planFromPriceId(priceId: string | null | undefined): PlanId | null {
+  if (!priceId) return null;
+  for (const id of PAID_PLAN_IDS) {
+    if (priceIdForPlan(id) === priceId) return id;
+  }
+  return null;
+}
 
-  const existing = await stripe.prices.list({ lookup_keys: [plan.lookupKey], active: true, limit: 1 });
-  if (existing.data[0]) {
-    priceCache[plan.lookupKey] = existing.data[0].id;
-    return existing.data[0].id;
+// ----- Live prices (read dollar amounts straight from Stripe) ----------------
+export interface LivePrice {
+  amount: number | null; // dollars/month (null if not configured / unavailable)
+  currency: string;
+  interval: string;
+}
+export type LivePrices = Record<PlanId, LivePrice>;
+
+let _priceCache: { at: number; data: LivePrices } | null = null;
+const PRICE_TTL_MS = 5 * 60 * 1000;
+
+export async function getLivePrices(): Promise<LivePrices> {
+  if (_priceCache && Date.now() - _priceCache.at < PRICE_TTL_MS) return _priceCache.data;
+
+  const blank: LivePrice = { amount: null, currency: "usd", interval: "month" };
+  const data: LivePrices = {
+    free: { amount: 0, currency: "usd", interval: "month" },
+    starter: { ...blank },
+    pro: { ...blank },
+    unlimited: { ...blank },
+  };
+
+  const stripe = getStripe();
+  if (stripe) {
+    await Promise.all(
+      PAID_PLAN_IDS.map(async (id) => {
+        const priceId = priceIdForPlan(id);
+        if (!priceId) return;
+        try {
+          const price = await stripe.prices.retrieve(priceId);
+          data[id] = {
+            amount: typeof price.unit_amount === "number" ? price.unit_amount / 100 : null,
+            currency: price.currency || "usd",
+            interval: price.recurring?.interval || "month",
+          };
+        } catch (e) {
+          console.error(`PRICE FETCH ERROR for ${id} (${priceId}):`, (e as any)?.message || e);
+        }
+      })
+    );
   }
 
-  const product = await stripe.products.create({ name: `TrimIQ ${plan.name}`, metadata: { planId } });
-  const price = await stripe.prices.create({
-    product: product.id,
-    currency: "usd",
-    unit_amount: plan.price * 100,
-    recurring: { interval: "month" },
-    lookup_key: plan.lookupKey,
-    metadata: { planId },
-  });
-  priceCache[plan.lookupKey] = price.id;
-  return price.id;
+  _priceCache = { at: Date.now(), data };
+  return data;
 }
 
 export async function getOrCreateCustomer(stripe: Stripe, email: string): Promise<string> {
@@ -49,14 +90,35 @@ export async function getOrCreateCustomer(stripe: Stripe, email: string): Promis
   return customer.id;
 }
 
+// Determine a subscription's plan using ONLY the Stripe subscription object:
+//   1) the Price ID on the subscription item -> our configured plan, then
+//   2) the subscription metadata.planId we set at checkout/upgrade, then
+//   3) (migration safety) the price's lookup_key from the old price scheme.
+export function planFromSub(sub: any): PlanId | null {
+  const priceId: string | undefined = sub?.items?.data?.[0]?.price?.id;
+  const byPrice = planFromPriceId(priceId);
+  if (byPrice) return byPrice;
+
+  const meta = sub?.metadata?.planId;
+  if (meta && ["starter", "pro", "unlimited", "free"].includes(meta)) return meta as PlanId;
+
+  const lk: string | undefined = sub?.items?.data?.[0]?.price?.lookup_key;
+  if (lk) {
+    if (lk.includes("starter")) return "starter";
+    if (lk.includes("unlimited")) return "unlimited";
+    if (lk.includes("pro")) return "pro";
+  }
+  return null;
+}
+
 // Sync a subscription's state onto the user record. resetEdits=true on new/renewed
-// billing cycles.
+// billing cycles. The plan is derived purely from the Stripe subscription.
 export async function syncSubscription(sub: any, resetEdits: boolean) {
-  const planId: string = sub?.metadata?.planId || planIdFromSub(sub) || "free";
+  const active = sub.status === "active" || sub.status === "trialing";
+  const planId: string = (active ? planFromSub(sub) : null) || "free";
   const email: string | undefined = sub?.metadata?.email;
   const customerId: string = typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
   const periodEnd = sub?.current_period_end ? new Date(sub.current_period_end * 1000) : null;
-  const active = sub.status === "active" || sub.status === "trialing";
 
   const data: any = {
     plan: active ? planId : "free",
@@ -66,7 +128,6 @@ export async function syncSubscription(sub: any, resetEdits: boolean) {
   };
   if (resetEdits) data.editsUsed = 0;
 
-  // Find by email (preferred) or by customer id.
   if (email) {
     await prisma.user.update({ where: { email }, data }).catch(async () => {
       await prisma.user.updateMany({ where: { stripeCustomerId: customerId }, data });
@@ -74,14 +135,4 @@ export async function syncSubscription(sub: any, resetEdits: boolean) {
   } else if (customerId) {
     await prisma.user.updateMany({ where: { stripeCustomerId: customerId }, data });
   }
-}
-
-// Try to infer the plan from the subscription's price lookup_key.
-function planIdFromSub(sub: any): string | null {
-  const lk: string | undefined = sub?.items?.data?.[0]?.price?.lookup_key;
-  if (!lk) return null;
-  if (lk.includes("starter")) return "starter";
-  if (lk.includes("pro")) return "pro";
-  if (lk.includes("unlimited")) return "unlimited";
-  return null;
 }
