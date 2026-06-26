@@ -11,8 +11,8 @@ import { createJob, getJob, listJobs, removeJob, runExclusive } from "@/lib/jobs
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { creditsLeft } from "@/lib/credits";
-import { getStripe, priceIdFor, getOrCreateCustomer, syncSubscription } from "@/lib/stripe";
-import { getPlan, type PlanId } from "@/lib/plans";
+import { getStripe, priceIdForPlan, getOrCreateCustomer, syncSubscription, planFromSub } from "@/lib/stripe";
+import { getPlan } from "@/lib/plans";
 import { requireAdmin, adminData } from "@/lib/admin";
 
 // ----- Admin: dashboard data + actions -------------------------------------
@@ -38,6 +38,36 @@ async function handleAdminAction(req: NextRequest) {
       await prisma.user.update({ where: { id: userId }, data: { suspended: false } });
     } else if (action === "delete") {
       await prisma.user.delete({ where: { id: userId } });
+    } else if (action === "migratePricing") {
+      // Move an existing subscriber onto the current Stripe Price for their tier.
+      // Switches the price on the existing subscription (never recreates it) with
+      // no proration, so the new amount simply applies from the next renewal.
+      const stripe = getStripe();
+      if (!stripe) return NextResponse.json({ error: "Billing isn't set up." }, { status: 503 });
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (!user?.stripeCustomerId) {
+        return NextResponse.json({ error: "This user has no Stripe customer / subscription." }, { status: 400 });
+      }
+      const actives = await stripe.subscriptions.list({ customer: user.stripeCustomerId, status: "active", limit: 10 });
+      if (actives.data.length === 0) {
+        return NextResponse.json({ error: "No active subscription to migrate." }, { status: 400 });
+      }
+      const sub: any = actives.data[0];
+      const detected = planFromSub(sub) || user.plan || "free";
+      const newPrice = priceIdForPlan(detected);
+      if (!newPrice) {
+        return NextResponse.json({ error: `No Stripe Price configured for the ${detected} plan. Set its STRIPE_PRICE_* env var first.` }, { status: 400 });
+      }
+      if (sub.items.data[0].price.id === newPrice) {
+        return NextResponse.json({ ok: true, message: "Already on current pricing." });
+      }
+      const updated: any = await stripe.subscriptions.update(sub.id, {
+        items: [{ id: sub.items.data[0].id, price: newPrice }],
+        proration_behavior: "none",
+        metadata: { ...(sub.metadata || {}), planId: detected, email: user.email },
+      } as any);
+      await syncSubscription(updated, false);
+      return NextResponse.json({ ok: true, message: `Migrated to current ${detected} pricing.` });
     } else {
       return NextResponse.json({ error: "Unknown action." }, { status: 400 });
     }
@@ -99,7 +129,13 @@ async function handleCheckout(req: NextRequest) {
     return NextResponse.json({ ok: true, message: "Your plan will switch to Free at the end of the current period." });
   }
 
-  const priceId = await priceIdFor(stripe, plan.id as PlanId);
+  const priceId = priceIdForPlan(plan.id);
+  if (!priceId) {
+    return NextResponse.json(
+      { error: `Pricing isn't configured for the ${plan.name} plan yet. Set ${plan.priceEnvVar} (its Stripe Price ID) in the environment.` },
+      { status: 503 }
+    );
+  }
 
   // Already subscribed -> change the existing subscription in place (no new one).
   if (actives.data.length > 0) {
