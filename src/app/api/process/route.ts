@@ -27,6 +27,7 @@ async function handleCheckout(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Please log in first." }, { status: 401 });
 
+  try {
   const { planId } = await req.json().catch(() => ({ planId: "" }));
   const plan = getPlan(planId);
   const user = await prisma.user.findUnique({ where: { email: session.email } });
@@ -66,6 +67,14 @@ async function handleCheckout(req: NextRequest) {
     allow_promotion_codes: true,
   } as any);
   return NextResponse.json({ url: checkout.url });
+  } catch (e: any) {
+    console.error("CHECKOUT ERROR:", e?.message || e);
+    const auth = e?.statusCode === 401 || /api key|authentication/i.test(e?.message || "");
+    const msg = auth
+      ? "Stripe rejected the API key. In Render, set STRIPE_SECRET_KEY to your SECRET key (starts with sk_test_), not the publishable key (pk_test_)."
+      : e?.message || "Couldn't start checkout. Please try again.";
+    return NextResponse.json({ error: msg }, { status: 400 });
+  }
 }
 
 async function handleCancel(req: NextRequest) {
@@ -77,8 +86,13 @@ async function handleCancel(req: NextRequest) {
   if (!user?.stripeSubscriptionId) {
     return NextResponse.json({ error: "No active subscription to cancel." }, { status: 400 });
   }
-  await stripe.subscriptions.update(user.stripeSubscriptionId, { cancel_at_period_end: true } as any);
-  return NextResponse.json({ ok: true, message: "Your subscription will end at the close of the current period." });
+  try {
+    await stripe.subscriptions.update(user.stripeSubscriptionId, { cancel_at_period_end: true } as any);
+    return NextResponse.json({ ok: true, message: "Your subscription will end at the close of the current period." });
+  } catch (e: any) {
+    console.error("CANCEL ERROR:", e?.message || e);
+    return NextResponse.json({ error: e?.message || "Couldn't cancel. Please try again." }, { status: 400 });
+  }
 }
 
 // ----- Stripe: webhook (keeps the DB in sync with payments) ----------------
