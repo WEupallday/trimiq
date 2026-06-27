@@ -22,7 +22,23 @@ export default function AdminDashboard({ data }: { data: any }) {
   const [q, setQ] = useState("");
   const [cbOnly, setCbOnly] = useState(false);
   const [busyId, setBusyId] = useState("");
+  const [testMsg, setTestMsg] = useState("");
   const s = data.stats;
+
+  async function sendTest() {
+    setTestMsg("Sending…");
+    try {
+      const res = await fetch("/api/process?admin=action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "testNotification" }),
+      });
+      const b = await res.json().catch(() => ({}));
+      setTestMsg(res.ok ? "Test sent — check your Discord channel." : b.error || "Failed to send.");
+    } catch {
+      setTestMsg("Failed to send.");
+    }
+  }
 
   async function act(userId: string, action: string, plan?: string) {
     if (action === "delete" && !confirm("Permanently delete this user?")) return;
@@ -95,6 +111,10 @@ export default function AdminDashboard({ data }: { data: any }) {
           <Stat label="Processing now" value={data.system.processing} />
           <Stat label="Queue waiting" value={data.system.queueDepth} />
         </Grid>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Btn onClick={sendTest} disabled={testMsg === "Sending…"}>Send test notification</Btn>
+          {testMsg && <span className="text-xs text-white/50">{testMsg}</span>}
+        </div>
         {data.recentErrors.length > 0 && (
           <div className="mt-4">
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">Recent errors</p>
