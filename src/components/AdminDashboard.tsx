@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 
 const PLAN_OPTIONS = ["free", "starter", "pro", "unlimited"];
 
@@ -17,13 +16,38 @@ function fmtPrice(a: number | null | undefined) {
   return a === null || a === undefined ? "—" : `$${a}`;
 }
 
-export default function AdminDashboard({ data }: { data: any }) {
-  const router = useRouter();
+function fmtMoney(n: number | null | undefined) {
+  const v = Number(n) || 0;
+  return "$" + v.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 });
+}
+
+export default function AdminDashboard({ data: initialData }: { data: any }) {
+  const [data, setData] = useState<any>(initialData);
   const [q, setQ] = useState("");
   const [cbOnly, setCbOnly] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [testMsg, setTestMsg] = useState("");
+  const [updatedAt, setUpdatedAt] = useState<string>("");
   const s = data.stats;
+  const r = data.revenue || {};
+
+  // Pull the latest admin data (used by both the 30s auto-refresh and actions).
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch("/api/process?admin=data", { cache: "no-store" });
+      if (!res.ok) return;
+      const d = await res.json();
+      setData(d);
+      setUpdatedAt(new Date().toLocaleTimeString());
+    } catch {
+      /* keep showing the last good data */
+    }
+  }, []);
+
+  useEffect(() => {
+    const id = setInterval(refresh, 30000);
+    return () => clearInterval(id);
+  }, [refresh]);
 
   async function sendTest() {
     setTestMsg("Sending…");
@@ -56,7 +80,7 @@ export default function AdminDashboard({ data }: { data: any }) {
       });
       const body = await res.json().catch(() => ({}));
       if (action === "migratePricing") alert(body.message || body.error || "Done.");
-      router.refresh();
+      await refresh();
     } catch {
       /* ignore */
     }
@@ -72,6 +96,11 @@ export default function AdminDashboard({ data }: { data: any }) {
 
   return (
     <div className="space-y-10">
+      <div className="flex items-center gap-2 text-xs text-white/40">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+        Live · auto-updates every 30s{updatedAt ? ` · last ${updatedAt}` : ""}
+      </div>
+
       {/* Top stats */}
       <Section title="Overview">
         <Grid>
@@ -82,12 +111,36 @@ export default function AdminDashboard({ data }: { data: any }) {
           <Stat label="Active subs" value={s.active} />
           <Stat label="Trials" value={s.trialing} />
           <Stat label="Canceled" value={s.canceled} />
-          <Stat label="MRR" value={`$${s.mrr}`} accent />
+          <Stat label="MRR" value={fmtMoney(s.mrr)} accent />
           <Stat label="Creator Beta" value={s.creatorBetaUsers} accent />
         </Grid>
         <p className="mt-3 text-xs text-white/40">
           Live Stripe pricing — Starter {fmtPrice(s.pricing?.starter)} · Pro {fmtPrice(s.pricing?.pro)} · Unlimited {fmtPrice(s.pricing?.unlimited)} /mo
         </p>
+      </Section>
+
+      {/* Revenue analytics */}
+      <Section title="Revenue analytics">
+        <Grid>
+          <Stat label="MRR" value={fmtMoney(r.mrr)} accent />
+          <Stat label="Today" value={fmtMoney(r.revenueToday)} />
+          <Stat label="This week" value={fmtMoney(r.revenueWeek)} />
+          <Stat label="This month" value={fmtMoney(r.revenueMonth)} />
+          <Stat label="Lifetime" value={fmtMoney(r.revenueLifetime)} accent />
+          <Stat label="ARPU" value={fmtMoney(r.arpu)} />
+          <Stat label="New subs today" value={r.newSubsToday ?? 0} />
+          <Stat label="New subs this week" value={r.newSubsWeek ?? 0} />
+          <Stat label="Canceled this week" value={r.canceledWeek ?? 0} />
+          <Stat label="Active paying" value={r.activePaying ?? 0} />
+        </Grid>
+        {r.available === false && (
+          <p className="mt-3 text-xs text-amber-300/70">Stripe revenue data isn&apos;t available right now.</p>
+        )}
+        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          <MiniChart title="Revenue / day (30d)" points={r.revenueByDay || []} type="bar" money color="#34d399" />
+          <MiniChart title="New subscriptions / day (30d)" points={r.newSubsByDay || []} type="bar" color="#818cf8" />
+          <MiniChart title="Active subscriptions (30d)" points={r.activeSubsByDay || []} type="line" color="#f472b6" />
+        </div>
       </Section>
 
       {/* Video analytics */}
@@ -262,5 +315,61 @@ function Btn({ children, onClick, disabled, danger }: { children: React.ReactNod
     >
       {children}
     </button>
+  );
+}
+
+// Lightweight dependency-free SVG chart (bar or line) over a {date,value}[] series.
+function MiniChart({
+  title,
+  points,
+  type = "bar",
+  money = false,
+  color = "#818cf8",
+}: {
+  title: string;
+  points: { date: string; value: number }[];
+  type?: "bar" | "line";
+  money?: boolean;
+  color?: string;
+}) {
+  const pts = points || [];
+  const n = pts.length || 1;
+  const max = Math.max(1, ...pts.map((p) => p.value || 0));
+  const W = 600;
+  const H = 140;
+  const fmt = (v: number) => (money ? fmtMoney(v) : String(v));
+
+  return (
+    <div className="glass rounded-xl p-4">
+      <div className="mb-2 flex items-baseline justify-between">
+        <p className="text-xs font-medium text-white/70">{title}</p>
+        <p className="text-[10px] text-white/30">peak {fmt(max)}</p>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full" style={{ height: 120 }}>
+        {type === "bar"
+          ? pts.map((p, i) => {
+              const bw = W / n;
+              const h = ((p.value || 0) / max) * (H - 8);
+              return (
+                <rect key={i} x={i * bw + 0.7} y={H - h} width={Math.max(0.8, bw - 1.4)} height={h} rx="1" fill={color}>
+                  <title>{`${p.date}: ${fmt(p.value || 0)}`}</title>
+                </rect>
+              );
+            })
+          : (
+            <polyline
+              fill="none"
+              stroke={color}
+              strokeWidth="2"
+              vectorEffect="non-scaling-stroke"
+              points={pts.map((p, i) => `${n > 1 ? (i / (n - 1)) * W : 0},${H - ((p.value || 0) / max) * (H - 8)}`).join(" ")}
+            />
+          )}
+      </svg>
+      <div className="mt-1 flex justify-between text-[10px] text-white/30">
+        <span>{pts[0]?.date}</span>
+        <span>{pts[pts.length - 1]?.date}</span>
+      </div>
+    </div>
   );
 }
