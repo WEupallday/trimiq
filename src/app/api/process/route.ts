@@ -14,6 +14,7 @@ import { creditsLeft } from "@/lib/credits";
 import { getStripe, priceIdForPlan, getOrCreateCustomer, syncSubscription, planFromSub } from "@/lib/stripe";
 import { getPlan } from "@/lib/plans";
 import { requireAdmin, adminData } from "@/lib/admin";
+import { notify, notificationsEnabled } from "@/lib/notify";
 
 // ----- Admin: dashboard data + actions -------------------------------------
 async function handleAdminData() {
@@ -27,6 +28,13 @@ async function handleAdminAction(req: NextRequest) {
   if (!admin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
   try {
     const { action, userId, plan } = await req.json();
+    if (action === "testNotification") {
+      if (!notificationsEnabled()) {
+        return NextResponse.json({ error: "Notifications aren't configured. Set DISCORD_WEBHOOK_URL first." }, { status: 400 });
+      }
+      await notify("test", { message: "TrimIQ notifications are working", triggeredBy: admin.email });
+      return NextResponse.json({ ok: true, sent: true });
+    }
     if (!userId) return NextResponse.json({ error: "Missing user." }, { status: 400 });
     if (action === "resetCredits") {
       await prisma.user.update({ where: { id: userId }, data: { editsUsed: 0 } });
@@ -37,7 +45,8 @@ async function handleAdminAction(req: NextRequest) {
     } else if (action === "unsuspend") {
       await prisma.user.update({ where: { id: userId }, data: { suspended: false } });
     } else if (action === "markCreatorBeta") {
-      await prisma.user.update({ where: { id: userId }, data: { isCreatorBeta: true } });
+      const u = await prisma.user.update({ where: { id: userId }, data: { isCreatorBeta: true } });
+      await notify("creator_beta", { email: u.email, username: u.username, plan: getPlan(u.plan).name });
     } else if (action === "unmarkCreatorBeta") {
       await prisma.user.update({ where: { id: userId }, data: { isCreatorBeta: false } });
     } else if (action === "delete") {
@@ -252,6 +261,11 @@ async function handleWebhook(req: NextRequest) {
           const sub: any = await stripe.subscriptions.retrieve(s.subscription);
           if (!sub.metadata?.email && s.metadata?.email) sub.metadata = s.metadata;
           await syncSubscription(sub, true);
+          // A completed Checkout = a brand-new paid subscription.
+          await notify("subscription", {
+            email: sub.metadata?.email,
+            plan: getPlan(planFromSub(sub) ?? undefined).name,
+          });
         }
         break;
       }
@@ -406,6 +420,18 @@ export async function POST(req: NextRequest) {
         await prisma.processingJob
           .create({ data: { email: session.email, name: originalName, status: "done", durationMs: Date.now() - startedAt, creatorBeta: !!user?.isCreatorBeta } })
           .catch(() => {});
+        // Notify on the user's very first successful video.
+        const doneCount = await prisma.processingJob
+          .count({ where: { email: session.email, status: "done" } })
+          .catch(() => 0);
+        if (doneCount === 1) {
+          await notify("first_video", {
+            email: session.email,
+            username: user?.username,
+            plan: getPlan(user?.plan).name,
+            seconds: ((Date.now() - startedAt) / 1000).toFixed(1),
+          });
+        }
       })
       .catch(async (err) => {
         console.error("PROCESS ERROR:", err);
@@ -414,6 +440,12 @@ export async function POST(req: NextRequest) {
         await prisma.processingJob
           .create({ data: { email: session.email, name: originalName, status: "error", durationMs: Date.now() - startedAt, error: job.error, creatorBeta: !!user?.isCreatorBeta } })
           .catch(() => {});
+        await notify("job_failed", {
+          email: session.email,
+          username: user?.username,
+          video: originalName,
+          error: job.error,
+        });
       })
       .finally(() => {
         unlink(inPath).catch(() => {});
