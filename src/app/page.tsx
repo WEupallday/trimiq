@@ -109,7 +109,7 @@ export default async function Home() {
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
                 </div>
                 <p className="text-sm text-white/60">Drop your raw video here</p>
-                <Link href="/signup" className="rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2 text-sm font-medium transition hover:opacity-90">
+                <Link href={loggedIn ? "/dashboard" : "/signup"} className="rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2 text-sm font-medium transition hover:opacity-90">
                   Generate Clean Edit
                 </Link>
               </div>
@@ -242,10 +242,10 @@ export default async function Home() {
               Join creators saving hours every week with one-click clean edits.
             </p>
             <Link
-              href="/signup"
+              href={loggedIn ? "/dashboard" : "/signup"}
               className="mt-8 inline-block rounded-xl bg-white px-8 py-3.5 font-medium text-ink transition hover:bg-white/90"
             >
-              Start free
+              {loggedIn ? "Go to Dashboard" : "Start free"}
             </Link>
           </div>
         </div>
