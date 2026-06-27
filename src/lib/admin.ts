@@ -8,6 +8,7 @@ import { getPlan } from "./plans";
 import { effectiveEditLimit, CREATOR_BETA_EDITS } from "./credits";
 import { jobs, queueDepth } from "./jobs";
 import { getLivePrices } from "./stripe";
+import { revenueAnalytics } from "./revenue";
 
 export function adminEmails(): string[] {
   return (process.env.ADMIN_EMAILS || "")
@@ -66,10 +67,15 @@ export async function adminData() {
   // Live prices straight from Stripe (no hardcoded amounts anywhere).
   const prices = await getLivePrices();
 
-  // MRR: sum of the live monthly price for users with an active paid subscription.
-  const mrr = users
+  // Full revenue analytics, computed live from Stripe data.
+  const revenue = await revenueAnalytics();
+
+  // MRR from Stripe's active subscriptions (falls back to the DB rollup if Stripe
+  // is unavailable).
+  const dbMrr = users
     .filter((u) => u.subscriptionStatus === "active" && u.plan !== "free")
     .reduce((sum, u) => sum + ((prices as any)[u.plan]?.amount || 0), 0);
+  const mrr = revenue.available ? revenue.mrr : dbMrr;
 
   return {
     users: users.map((u) => {
@@ -114,6 +120,7 @@ export async function adminData() {
         currency: prices.pro.currency || "usd",
       },
     },
+    revenue,
     system: {
       status: "online",
       queueDepth: queueDepth(),
