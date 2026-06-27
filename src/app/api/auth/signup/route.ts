@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { hashPassword, createSessionToken, SESSION_COOKIE } from "@/lib/auth";
+import { notify } from "@/lib/notify";
 
 export const runtime = "nodejs";
 
@@ -38,6 +39,9 @@ export async function POST(req: Request) {
     const user = await prisma.user.create({
       data: { email: normalized, username: uname, passwordHash: await hashPassword(String(password)) },
     });
+
+    // Founder notification (fire-and-forget; never blocks signup).
+    void notify("signup", { email: user.email, username: uname });
 
     const token = await createSessionToken({ userId: user.id, email: user.email });
     const res = NextResponse.json({ ok: true });
