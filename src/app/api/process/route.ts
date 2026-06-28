@@ -49,6 +49,10 @@ async function handleAdminAction(req: NextRequest) {
       await notify("creator_beta", { email: u.email, username: u.username, plan: getPlan(u.plan).name });
     } else if (action === "unmarkCreatorBeta") {
       await prisma.user.update({ where: { id: userId }, data: { isCreatorBeta: false } });
+    } else if (action === "markTestAccount") {
+      await prisma.user.update({ where: { id: userId }, data: { isTestAccount: true } });
+    } else if (action === "unmarkTestAccount") {
+      await prisma.user.update({ where: { id: userId }, data: { isTestAccount: false } });
     } else if (action === "delete") {
       await prisma.user.delete({ where: { id: userId } });
     } else if (action === "migratePricing") {
