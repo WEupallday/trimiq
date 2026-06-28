@@ -26,7 +26,7 @@ export const PLANS: Record<PlanId, Plan> = {
     edits: 5,
     priceEnvVar: null,
     blurb: "Try it out",
-    features: ["5 free edits", "No credit card needed", "Standard processing"],
+    features: ["One-click clean edits", "No credit card needed", "Standard processing"],
   },
   starter: {
     id: "starter",
