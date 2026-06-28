@@ -28,7 +28,9 @@ export interface RevenueAnalytics {
 
 const DAY = 86400;
 const CACHE_TTL_MS = 60 * 1000;
-let _cache: { at: number; data: RevenueAnalytics } | null = null;
+// Cache the raw Stripe payloads (not the computed result) so the test-account
+// exclusion is always re-applied freshly without re-hitting the API.
+let _rawCache: { at: number; invoices: any[]; subs: any[] } | null = null;
 
 function empty(available: boolean): RevenueAnalytics {
   return {
@@ -98,18 +100,22 @@ async function listAllSubs(stripe: any): Promise<any[]> {
   return out;
 }
 
-export async function revenueAnalytics(): Promise<RevenueAnalytics> {
-  if (_cache && Date.now() - _cache.at < CACHE_TTL_MS) return _cache.data;
-
+export async function revenueAnalytics(excludeCustomerIds: Set<string> = new Set()): Promise<RevenueAnalytics> {
   const stripe = getStripe();
-  if (!stripe) {
-    const e = empty(false);
-    _cache = { at: Date.now(), data: e };
-    return e;
-  }
+  if (!stripe) return empty(false);
 
   try {
-    const [invoices, subs] = await Promise.all([listAllInvoices(stripe), listAllSubs(stripe)]);
+    let raw = _rawCache;
+    if (!raw || Date.now() - raw.at >= CACHE_TTL_MS) {
+      const [inv, sub] = await Promise.all([listAllInvoices(stripe), listAllSubs(stripe)]);
+      raw = { at: Date.now(), invoices: inv, subs: sub };
+      _rawCache = raw;
+    }
+
+    // Exclude test/founder accounts (matched by Stripe customer id) from EVERY metric.
+    const custId = (c: any) => (typeof c === "string" ? c : c?.id || "");
+    const invoices = raw.invoices.filter((inv: any) => !excludeCustomerIds.has(custId(inv.customer)));
+    const subs = raw.subs.filter((s: any) => !excludeCustomerIds.has(custId(s.customer)));
 
     // Time boundaries (UTC).
     const now = new Date();
@@ -190,11 +196,9 @@ export async function revenueAnalytics(): Promise<RevenueAnalytics> {
       newSubsByDay,
       activeSubsByDay,
     };
-    _cache = { at: Date.now(), data };
     return data;
   } catch (e) {
     console.error("REVENUE ANALYTICS ERROR:", (e as any)?.message || e);
-    const fallback = _cache?.data || empty(true);
-    return fallback;
+    return empty(true);
   }
 }
