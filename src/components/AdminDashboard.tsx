@@ -132,7 +132,13 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
           <Stat label="New subs this week" value={r.newSubsWeek ?? 0} />
           <Stat label="Canceled this week" value={r.canceledWeek ?? 0} />
           <Stat label="Active paying" value={r.activePaying ?? 0} />
+          <Stat label="Conversion" value={`${s.conversion ?? 0}%`} />
         </Grid>
+        {s.testAccounts > 0 && (
+          <p className="mt-3 text-xs text-white/40">
+            Business metrics exclude {s.testAccounts} test/founder account{s.testAccounts === 1 ? "" : "s"} · {s.realUsers} real users counted.
+          </p>
+        )}
         {r.available === false && (
           <p className="mt-3 text-xs text-amber-300/70">Stripe revenue data isn&apos;t available right now.</p>
         )}
@@ -215,6 +221,7 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
                     {u.username || <span className="text-white/40">no username</span>}
                     {u.isAdmin && <span className="ml-2 rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] text-indigo-200">ADMIN</span>}
                     {u.isCreatorBeta && <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-200">CREATOR BETA</span>}
+                    {u.isTestAccount && <span className="ml-2 rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-200">TEST</span>}
                     {u.suspended && <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-200">SUSPENDED</span>}
                   </p>
                   <p className="truncate text-sm text-white/50">{u.email}</p>
@@ -250,6 +257,11 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
                     <Btn onClick={() => act(u.id, "unmarkCreatorBeta")} disabled={busyId === u.id}>Remove Creator Beta</Btn>
                   ) : (
                     <Btn onClick={() => act(u.id, "markCreatorBeta")} disabled={busyId === u.id}>Make Creator Beta</Btn>
+                  )}
+                  {u.isTestAccount ? (
+                    <Btn onClick={() => act(u.id, "unmarkTestAccount")} disabled={busyId === u.id}>Unmark test</Btn>
+                  ) : (
+                    <Btn onClick={() => act(u.id, "markTestAccount")} disabled={busyId === u.id}>Mark as test</Btn>
                   )}
                   <Btn danger onClick={() => act(u.id, "delete")} disabled={busyId === u.id}>Delete</Btn>
                 </div>
