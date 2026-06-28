@@ -82,7 +82,7 @@ export default async function Home() {
             href={loggedIn ? "/dashboard" : "/signup"}
             className="group relative w-full rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-7 py-3.5 text-center font-medium shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40 sm:w-auto"
           >
-            {loggedIn ? "Go to Dashboard" : "Start free — 5 edits"}
+            {loggedIn ? "Go to Dashboard" : "Start Editing Free"}
           </Link>
           <a
             href="#how"
@@ -92,7 +92,7 @@ export default async function Home() {
           </a>
         </div>
         <p className="animate-fade-up mt-4 text-sm text-white/40">
-          No credit card required · 5 free edits
+          No credit card required · Ready to post in seconds
         </p>
 
         {/* Mock app preview */}
@@ -245,7 +245,7 @@ export default async function Home() {
               href={loggedIn ? "/dashboard" : "/signup"}
               className="mt-8 inline-block rounded-xl bg-white px-8 py-3.5 font-medium text-ink transition hover:bg-white/90"
             >
-              {loggedIn ? "Go to Dashboard" : "Start free"}
+              {loggedIn ? "Go to Dashboard" : "Start Editing Free"}
             </Link>
           </div>
         </div>
