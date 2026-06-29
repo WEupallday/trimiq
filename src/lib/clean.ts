@@ -218,12 +218,12 @@ function isNearPrefix(a: string[], b: string[], thresh: number): boolean {
 
 // Fraction of the smaller line's words that also appear in the other line.
 function tokenOverlap(a: string[], b: string[]): number {
-  const sa = new Set(stripFiller(a));
-  const sb = new Set(stripFiller(b));
-  if (!sa.size || !sb.size) return 0;
+  const aUniq = Array.from(new Set(stripFiller(a)));
+  const bSet = new Set(stripFiller(b));
+  if (!aUniq.length || !bSet.size) return 0;
   let inter = 0;
-  for (const w of sa) if (sb.has(w)) inter++;
-  return inter / Math.min(sa.size, sb.size);
+  for (let i = 0; i < aUniq.length; i++) if (bSet.has(aUniq[i])) inter++;
+  return inter / Math.min(aUniq.length, bSet.size);
 }
 
 // Is `next` a retake / re-statement of `prev` (same thing said again)?
