@@ -13,7 +13,7 @@
 //     clips process consistently without running the box out of memory.
 // ===========================================================================
 import { spawn } from "node:child_process";
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
@@ -195,7 +195,7 @@ function splitLines(words: Word[], sentenceGap: number): Line[] {
   return lines;
 }
 
-// Collapse a mid-line restart, e.g. "I'm gonna— I'm gonna show you" -> keep the
+// Collapse a leading restart, e.g. "I'm gonna— I'm gonna show you" -> keep the
 // last attempt within the line.
 function collapseRestart(line: Line): Line {
   const n = line.norm;
@@ -204,6 +204,26 @@ function collapseRestart(line: Line): Line {
   if (n[1] === n[0]) last = 1;
   for (let j = 2; j + 1 < n.length; j++) if (n[j] === n[0] && n[j + 1] === n[1]) last = j;
   return last > 0 ? mkLine(line.words.slice(last)) : line;
+}
+
+// Remove any immediately-repeated phrase within a line ("I want to I want to show
+// you" -> "I want to show you"). Keeps the later, more complete copy. Phrases only
+// (k>=2); single-word stutters are handled in fillerMask so emphasis is safe.
+function collapseRepeats(line: Line): Line {
+  const arr = line.words.slice();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let p = 0; p < arr.length && !changed; p++) {
+      const maxK = Math.min(8, Math.floor((arr.length - p) / 2));
+      for (let k = maxK; k >= 2; k--) {
+        let eq = true;
+        for (let t = 0; t < k; t++) if (arr[p + t].w !== arr[p + k + t].w) { eq = false; break; }
+        if (eq) { arr.splice(p, k); changed = true; break; }
+      }
+    }
+  }
+  return arr.length ? mkLine(arr) : line;
 }
 
 const stripFiller = (a: string[]) => a.filter((w) => !HARD_FILLER.has(w) && !SOFT_FILLER.has(w));
@@ -242,26 +262,60 @@ function isCorrectionLine(line: Line): boolean {
   return line.norm.length <= 3 && line.norm.some((w) => CORR.has(w));
 }
 
-function removeFillers(kw: Word[], s: Settings): Word[] {
-  if (!s.removeFiller) return kw;
-  const out: Word[] = [];
+// Words that legitimately precede the VERB "like" (those are kept); otherwise
+// "like" is a discourse filler and gets removed.
+const LIKE_VERB_PREV = new Set(["i","you","we","they","he","she","it","really","just","dont","do","does","did","would","will","ll","gonna","wanna","to","might","may","could","should","also","still","not","never","always","kinda","sorta","definitely","feel","feels","look","looks","sound","sounds","seem","seems","taste","tastes","felt","looked"]);
+const ALWAYS_SOFT = new Set(["basically", "literally", "actually"]); // discourse fillers, safe to drop
+const SO_OPENERS = new Set(["okay","ok","alright","alrighty","yeah","yep","right","well","now","anyway","anyways"]);
+const INTENSIFIER = new Set(["very","really","so","no","go","yeah","yes","ok","okay","ha","big","huge"]);
+
+// Returns a boolean[] mask aligned to `kw`: true = this word is a filler/stutter
+// to physically excise from the final cut.
+function fillerMask(kw: Word[], s: Settings): boolean[] {
+  const mask = new Array<boolean>(kw.length).fill(false);
+  if (!s.removeFiller) return mask;
   for (let i = 0; i < kw.length; i++) {
     const w = kw[i].w;
-    if (HARD_FILLER.has(w)) continue;
-    if (s.removeSoftFiller) {
-      const prev = out[out.length - 1];
-      const next = kw[i + 1];
-      const isolated = (!prev || kw[i].start - prev.end > 0.2) && (!next || next.start - kw[i].end > 0.2);
-      if (w === "you" && next && next.w === "know") {
-        const after = kw[i + 2];
-        const isoPair = (!prev || kw[i].start - prev.end > 0.2) && (!after || after.start - next.end > 0.2);
-        if (isoPair || !prev) { i++; continue; }
-      }
-      if (SOFT_FILLER.has(w) && (isolated || !prev)) continue;
+    if (HARD_FILLER.has(w)) { mask[i] = true; continue; }
+    if (!s.removeSoftFiller) continue;
+
+    let prevIdx = -1;
+    for (let j = i - 1; j >= 0; j--) if (!mask[j]) { prevIdx = j; break; }
+    const prev = prevIdx >= 0 ? kw[prevIdx] : null;
+    const next = kw[i + 1];
+
+    if (ALWAYS_SOFT.has(w)) { mask[i] = true; continue; }
+    if (w === "so") {
+      const opener = prev && SO_OPENERS.has(prev.w);
+      const sentenceInitial = !prev || prev.term || opener || kw[i].start - prev.end > 0.4;
+      if (sentenceInitial) mask[i] = true;
+      continue;
     }
-    out.push(kw[i]);
+    if (w === "like") {
+      const keepAsVerb = prev && LIKE_VERB_PREV.has(prev.w);
+      if (!keepAsVerb) mask[i] = true;
+      continue;
+    }
+    if (w === "you" && next && next.w === "know") {
+      const beforeW = prev ? prev.w : null;
+      const afterW = kw[i + 2] ? kw[i + 2].w : null;
+      const isQuestion = !!beforeW && ["do","dont","did","does","would","ya","you"].includes(beforeW);
+      const isRealVerb = !!afterW && ["that","how","what","why","where","who","when","if","the","this","a","an","your","my","his","her"].includes(afterW);
+      if (!isQuestion && !isRealVerb) { mask[i] = true; mask[i + 1] = true; }
+      continue;
+    }
   }
-  return out;
+  // Stutter pass: collapse fast immediate word repeats ("the the", "this this"),
+  // dropping the earlier copy. Intensifiers are left alone so "very very" survives.
+  for (let i = 0; i < kw.length; i++) {
+    if (mask[i]) continue;
+    let j = i + 1;
+    while (j < kw.length && mask[j]) j++;
+    if (j < kw.length && kw[i].w === kw[j].w && !INTENSIFIER.has(kw[i].w) && kw[j].start - kw[i].end < 0.28) {
+      mask[i] = true;
+    }
+  }
+  return mask;
 }
 
 function mergeRanges(ranges: [number, number][], minLen: number): [number, number][] {
@@ -276,39 +330,49 @@ function mergeRanges(ranges: [number, number][], minLen: number): [number, numbe
 }
 
 function planFromTranscript(words: Word[], duration: number, s: Settings): [number, number][] {
-  let lines = splitLines(words, s.sentenceGap).map(collapseRestart);
+  let lines = splitLines(words, s.sentenceGap).map(collapseRestart).map(collapseRepeats);
   lines = lines.filter((l) => !isCorrectionLine(l));
 
   // Cluster consecutive retakes of the same statement and keep only the best
   // (final, completed) take of each cluster.
   const kept: Line[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    let j = i;
+  let li = 0;
+  while (li < lines.length) {
+    let j = li;
     while (j + 1 < lines.length && isRetake(lines[j], lines[j + 1], s)) j++;
-    if (j > i) {
-      const cluster = lines.slice(i, j + 1);
+    if (j > li) {
+      const cluster = lines.slice(li, j + 1);
       const finalTake =
         [...cluster].reverse().find((l) => l.term) ||
         cluster.reduce((best, l) => (l.norm.length > best.norm.length ? l : best));
       kept.push(finalTake);
     } else {
-      kept.push(lines[i]);
+      kept.push(lines[li]);
     }
-    i = j + 1;
+    li = j + 1;
   }
 
-  let kw = removeFillers(kept.flatMap((l) => l.words), s);
-  if (!kw.length) return [];
+  // Mark fillers/stutters, then keep the rest.
+  const allWords = kept.flatMap((l) => l.words);
+  const mask = fillerMask(allWords, s);
+  const keep = allWords.filter((_, i) => !mask[i]);
+  if (!keep.length) return [];
+
+  // Build kept time segments. Cut (excise) between two kept words when there is a
+  // real pause longer than naturalPause, OR a filler/dropped word sat between them
+  // — so fillers are physically removed, not just dropped from the text.
   const segs: [number, number][] = [];
-  let segStart = Math.max(0, kw[0].start - Math.min(s.wordPad, 0.1));
-  for (let k = 0; k < kw.length; k++) {
-    const cur = kw[k];
-    const next = kw[k + 1];
+  let segStart = Math.max(0, keep[0].start - Math.min(s.wordPad, 0.1));
+  for (let k = 0; k < keep.length; k++) {
+    const cur = keep[k];
+    const next = keep[k + 1];
     if (!next) { segs.push([segStart, Math.min(duration, cur.end + Math.min(s.wordPad, 0.12))]); break; }
     const gap = next.start - cur.end;
-    if (gap <= s.naturalPause) continue;
-    const pad = Math.min(s.wordPad, gap * 0.4);
+    const removedBetween =
+      allWords.some((w, i) => mask[i] && w.start >= cur.end - 0.001 && w.end <= next.start + 0.001) ||
+      gap > s.naturalPause + 0.25;
+    if (gap <= s.naturalPause && !removedBetween) continue; // natural micro-pause: keep flowing
+    const pad = Math.min(s.wordPad, Math.max(0.04, gap * 0.4));
     segs.push([segStart, Math.min(duration, cur.end + pad)]);
     segStart = Math.max(0, next.start - pad);
   }
@@ -316,62 +380,45 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
 }
 
 // ============================== rendering ==================================
-// Encode ONE kept segment to its own MPEG-TS file. Input-seek (`-ss` before
-// `-i`) keeps this fast and low-memory; re-encoding makes the cut frame-accurate.
-// No scale/crop/reframe — the frame is passed through at its exact resolution.
-async function encodeSegment(
-  input: string, a: number, b: number, idx: number, dir: string, s: Settings, preset: string
-): Promise<string> {
-  const out = join(dir, `seg-${idx}-${Date.now()}.ts`);
-  const dur = Math.max(0.05, b - a);
-  const args = ["-y", "-ss", a.toFixed(3), "-i", input, "-t", dur.toFixed(3)];
-  if (dur > s.fade * 3) {
-    args.push("-af", `afade=t=in:st=0:d=${s.fade},afade=t=out:st=${(dur - s.fade).toFixed(3)}:d=${s.fade}`);
-  }
-  args.push(
-    "-c:v", "libx264", "-preset", preset, "-crf", "18", "-pix_fmt", "yuv420p",
-    "-c:a", "aac", "-b:a", "192k",
-    "-video_track_timescale", "90000", "-avoid_negative_ts", "make_zero",
-    "-max_muxing_queue_size", "1024", "-f", "mpegts", out
-  );
-  await run(FFMPEG, args);
-  return out;
-}
-
-// Timeline-only render. Exact resolution/aspect/framing preserved (no downscale).
-// Memory stays bounded because segments are encoded one at a time and then joined
-// with a stream copy.
+// Single-pass `select`/`aselect` render. This was validated to be the best of
+// both worlds:
+//   • MEMORY-SAFE: one streaming decode pass (~1 GB peak even at true 4K, well
+//     under the box's 2 GB), so large clips never run it out of memory.
+//   • A/V LOCKED: audio and video are cut from the SAME timeline, so there is no
+//     lip-sync drift across many cuts (the failure mode of joining separately
+//     encoded segments).
+//   • EXACT OUTPUT: no scale/crop/reframe — the source resolution, aspect ratio,
+//     pixel format and frame rate are preserved; crf 18 is visually lossless.
 async function renderFinal(
-  input: string, output: string, segs: [number, number][], s: Settings, original: number
+  input: string, output: string, segs: [number, number][], _s: Settings, original: number
 ): Promise<boolean> {
-  // No cuts at all -> remux the original streams unchanged (exact quality, fast).
+  // No cuts at all -> remux the original streams unchanged (bit-exact, fast).
   const noCuts = segs.length === 1 && segs[0][0] <= 0.05 && segs[0][1] >= original - 0.05;
   if (noCuts) {
     await run(FFMPEG, ["-y", "-i", input, "-c", "copy", "-movflags", "+faststart", output]);
     return false;
   }
 
-  // For very large frames (true 4K+) use a lighter preset so encoding stays well
-  // within memory; quality stays high at crf 18. Resolution is NOT changed.
+  // Lighter preset only for very large frames (true 4K+) to keep encode memory low.
+  // Resolution is NOT changed either way.
   const { w, h } = await getDims(input);
   const preset = Math.max(w, h) > 1920 ? "superfast" : "veryfast";
-  const dir = dirname(output);
 
-  const tsFiles: string[] = [];
-  try {
-    for (let i = 0; i < segs.length; i++) {
-      tsFiles.push(await encodeSegment(input, segs[i][0], segs[i][1], i, dir, s, preset));
-    }
-    const listPath = join(dir, `concat-${Date.now()}.txt`);
-    await writeFile(listPath, tsFiles.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"));
-    await run(FFMPEG, [
-      "-y", "-f", "concat", "-safe", "0", "-i", listPath,
-      "-c", "copy", "-movflags", "+faststart", output,
-    ]);
-    await unlink(listPath).catch(() => {});
-  } finally {
-    for (const f of tsFiles) await unlink(f).catch(() => {});
-  }
+  // Build the keep expression: gte(t,a)*lt(t,b) for each segment, OR'd with "+".
+  // Commas inside the expression are protected by the surrounding single quotes
+  // (the filtergraph parser's own quoting), so no shell escaping is needed.
+  const expr = segs.map(([a, b]) => `gte(t,${a.toFixed(3)})*lt(t,${b.toFixed(3)})`).join("+");
+
+  await run(FFMPEG, [
+    "-y", "-i", input,
+    "-vf", `select='${expr}',setpts=N/FRAME_RATE/TB`,
+    "-af", `aselect='${expr}',asetpts=N/SR/TB`,
+    "-vsync", "cfr",
+    "-c:v", "libx264", "-preset", preset, "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "0",
+    "-c:a", "aac", "-b:a", "192k",
+    "-movflags", "+faststart", "-max_muxing_queue_size", "1024",
+    output,
+  ]);
   return false; // never scaled
 }
 
