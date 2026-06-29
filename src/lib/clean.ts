@@ -1,16 +1,19 @@
 // ===========================================================================
-// TrimIQ Editing Engine — V6 (premium, quality-preserving)
-//   • Transcription-driven cuts (false starts, fillers, natural pauses, no clip)
-//   • Editing modes: light / balanced / aggressive
-//   • Subtle smooth zoom in/out
-//   • Auto-reframe horizontal -> 9:16 (vertical kept at original resolution)
-//   • Preserves original resolution + fps; encodes at high quality (no downscale)
-//   • Returns edit statistics
-// (Product/B-roll protection is optional and intentionally skipped — it added a
-//  heavy extra decode pass that hurt reliability on the current server.)
+// TrimIQ Editing Engine — V7 (quality-first, resolution-exact, memory-safe)
+//   • Transcription-driven cuts: removes dead space, long pauses, fillers,
+//     false starts, correction phrases, and repeated/retake lines.
+//   • Retake clustering: when you say something several times, only the final
+//     complete take is kept.
+//   • Editing modes: light / balanced / aggressive (snappy short-form pacing).
+//   • EXACT output: no crop, no zoom, no reframe, NO downscale. The export keeps
+//     the uploaded resolution, aspect ratio, framing and fps exactly.
+//   • Memory-safe rendering: each kept segment is encoded on its own, then the
+//     pieces are concatenated with a stream copy. Peak memory scales with one
+//     frame's resolution — not the video length or number of cuts — so large/4K
+//     clips process consistently without running the box out of memory.
 // ===========================================================================
 import { spawn } from "node:child_process";
-import { readFile, unlink } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
@@ -18,7 +21,7 @@ import ffprobeStatic from "ffprobe-static";
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
 
-// ------------------------------ modes (P5) ---------------------------------
+// ------------------------------ modes --------------------------------------
 export type EditMode = "light" | "balanced" | "aggressive";
 
 export type Settings = {
@@ -45,14 +48,14 @@ export const MODE_PRESETS: Record<EditMode, Settings> = {
     nearPrefixThresh: 0.7, dropRatio: 0.55,
   },
   balanced: {
-    silenceThresholdDb: "auto", minPause: 0.4, leadIn: 0.12, trailOut: 0.18,
-    naturalPause: 0.35, wordPad: 0.1, minClipLength: 0.2, fade: 0.05,
+    silenceThresholdDb: "auto", minPause: 0.4, leadIn: 0.10, trailOut: 0.16,
+    naturalPause: 0.30, wordPad: 0.09, minClipLength: 0.2, fade: 0.05,
     sentenceGap: 0.6, removeFiller: true, removeSoftFiller: true,
     nearPrefixThresh: 0.6, dropRatio: 0.85,
   },
   aggressive: {
-    silenceThresholdDb: "auto", minPause: 0.25, leadIn: 0.09, trailOut: 0.13,
-    naturalPause: 0.22, wordPad: 0.08, minClipLength: 0.18, fade: 0.04,
+    silenceThresholdDb: "auto", minPause: 0.25, leadIn: 0.08, trailOut: 0.11,
+    naturalPause: 0.18, wordPad: 0.07, minClipLength: 0.18, fade: 0.04,
     sentenceGap: 0.45, removeFiller: true, removeSoftFiller: true,
     nearPrefixThresh: 0.55, dropRatio: 0.95,
   },
@@ -81,7 +84,7 @@ function run(cmd: string, args: string[]): Promise<{ stdout: string; stderr: str
     p.stderr.on("data", (d) => (stderr += d.toString()));
     p.on("error", reject);
     p.on("close", (code) =>
-      code === 0 ? resolve({ stdout, stderr }) : reject(new Error(stderr || `exit ${code}`))
+      code === 0 ? resolve({ stdout, stderr }) : reject(new Error(stderr.slice(-1500) || `exit ${code}`))
     );
   });
 }
@@ -142,7 +145,7 @@ const CORR = new Set(["no", "nope", "wait", "sorry", "scratch", "redo", "actuall
 const CORR_PHRASES = [
   "let me say that again", "let me start over", "let me redo", "start over", "one more time",
   "say that again", "let me try again", "take that again", "do that again", "let me restart",
-  "let me rephrase", "hold on", "wait no", "let me do that again",
+  "let me rephrase", "hold on", "wait no", "let me do that again", "scratch that", "take two",
 ];
 
 async function extractAudio(input: string): Promise<string> {
@@ -153,16 +156,27 @@ async function extractAudio(input: string): Promise<string> {
 
 async function transcribe(audioPath: string, apiKey: string): Promise<Word[]> {
   const bytes = await readFile(audioPath);
-  const res = await fetch(
-    "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&punctuate=true",
-    { method: "POST", headers: { Authorization: `Token ${apiKey}`, "Content-Type": "audio/wav" }, body: bytes }
-  );
-  if (!res.ok) throw new Error(`Deepgram ${res.status}: ${await res.text()}`);
-  const json: any = await res.json();
-  const words = json?.results?.channels?.[0]?.alternatives?.[0]?.words ?? [];
-  return words
-    .map((x: any) => ({ w: norm(x.word), term: /[.?!]$/.test(x.punctuated_word || x.word || ""), start: x.start, end: x.end }))
-    .filter((x: Word) => x.w);
+  // One quick retry on transient Deepgram/network errors so a blip can't silently
+  // drop us to the weaker audio-only path.
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(
+        "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&punctuate=true",
+        { method: "POST", headers: { Authorization: `Token ${apiKey}`, "Content-Type": "audio/wav" }, body: bytes }
+      );
+      if (!res.ok) throw new Error(`Deepgram ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const json: any = await res.json();
+      const words = json?.results?.channels?.[0]?.alternatives?.[0]?.words ?? [];
+      return words
+        .map((x: any) => ({ w: norm(x.word), term: /[.?!]$/.test(x.punctuated_word || x.word || ""), start: x.start, end: x.end }))
+        .filter((x: Word) => x.w);
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("transcription failed");
 }
 
 const mkLine = (ws: Word[]): Line => ({
@@ -181,6 +195,8 @@ function splitLines(words: Word[], sentenceGap: number): Line[] {
   return lines;
 }
 
+// Collapse a mid-line restart, e.g. "I'm gonna— I'm gonna show you" -> keep the
+// last attempt within the line.
 function collapseRestart(line: Line): Line {
   const n = line.norm;
   if (n.length < 4) return line;
@@ -191,6 +207,7 @@ function collapseRestart(line: Line): Line {
 }
 
 const stripFiller = (a: string[]) => a.filter((w) => !HARD_FILLER.has(w) && !SOFT_FILLER.has(w));
+
 function isNearPrefix(a: string[], b: string[], thresh: number): boolean {
   a = stripFiller(a); b = stripFiller(b);
   if (a.length < 2 || a.length >= b.length) return false;
@@ -198,6 +215,27 @@ function isNearPrefix(a: string[], b: string[], thresh: number): boolean {
   for (let i = 0; i < a.length; i++) if (a[i] === b[i]) m++;
   return m / a.length >= thresh;
 }
+
+// Fraction of the smaller line's words that also appear in the other line.
+function tokenOverlap(a: string[], b: string[]): number {
+  const sa = new Set(stripFiller(a));
+  const sb = new Set(stripFiller(b));
+  if (!sa.size || !sb.size) return 0;
+  let inter = 0;
+  for (const w of sa) if (sb.has(w)) inter++;
+  return inter / Math.min(sa.size, sb.size);
+}
+
+// Is `next` a retake / re-statement of `prev` (same thing said again)?
+function isRetake(prev: Line, next: Line, s: Settings): boolean {
+  if (isNearPrefix(prev.norm, next.norm, s.nearPrefixThresh)) return true; // prev is a false start of next
+  if (isNearPrefix(next.norm, prev.norm, s.nearPrefixThresh)) return true; // next trails off, prev was fuller
+  const ov = tokenOverlap(prev.norm, next.norm);
+  if (!prev.term && ov >= 0.6) return true; // restated an unfinished attempt
+  if (ov >= 0.82) return true;              // near-duplicate sentences
+  return false;
+}
+
 function isCorrectionLine(line: Line): boolean {
   const t = line.norm.join(" ");
   if (CORR_PHRASES.some((p) => t.includes(p))) return true;
@@ -240,22 +278,33 @@ function mergeRanges(ranges: [number, number][], minLen: number): [number, numbe
 function planFromTranscript(words: Word[], duration: number, s: Settings): [number, number][] {
   let lines = splitLines(words, s.sentenceGap).map(collapseRestart);
   lines = lines.filter((l) => !isCorrectionLine(l));
+
+  // Cluster consecutive retakes of the same statement and keep only the best
+  // (final, completed) take of each cluster.
   const kept: Line[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (i + 1 < lines.length && isNearPrefix(lines[i].norm, lines[i + 1].norm, s.nearPrefixThresh)) {
-      const a = lines[i].norm.length;
-      const b = lines[i + 1].norm.length;
-      if (!lines[i].term || a < s.dropRatio * b) continue;
+  let i = 0;
+  while (i < lines.length) {
+    let j = i;
+    while (j + 1 < lines.length && isRetake(lines[j], lines[j + 1], s)) j++;
+    if (j > i) {
+      const cluster = lines.slice(i, j + 1);
+      const finalTake =
+        [...cluster].reverse().find((l) => l.term) ||
+        cluster.reduce((best, l) => (l.norm.length > best.norm.length ? l : best));
+      kept.push(finalTake);
+    } else {
+      kept.push(lines[i]);
     }
-    kept.push(lines[i]);
+    i = j + 1;
   }
+
   let kw = removeFillers(kept.flatMap((l) => l.words), s);
   if (!kw.length) return [];
   const segs: [number, number][] = [];
   let segStart = Math.max(0, kw[0].start - Math.min(s.wordPad, 0.1));
-  for (let i = 0; i < kw.length; i++) {
-    const cur = kw[i];
-    const next = kw[i + 1];
+  for (let k = 0; k < kw.length; k++) {
+    const cur = kw[k];
+    const next = kw[k + 1];
     if (!next) { segs.push([segStart, Math.min(duration, cur.end + Math.min(s.wordPad, 0.12))]); break; }
     const gap = next.start - cur.end;
     if (gap <= s.naturalPause) continue;
@@ -267,52 +316,63 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
 }
 
 // ============================== rendering ==================================
-// Timeline-only edit: cut the kept segments and concatenate them. No crop, zoom,
-// reframe, or aspect-ratio change — framing is preserved exactly. The ONLY visual
-// change is a safety scale-down for sources above 1080p (true 4K), which is
-// required so they don't exhaust the server's memory; 1080p-and-under is untouched
-// and TikTok displays at most 1080p, so the result looks identical when posted.
-async function renderFinal(
-  input: string,
-  output: string,
-  segs: [number, number][],
-  s: Settings
-): Promise<boolean> {
-  const { w, h } = await getDims(input);
-  const longSide = Math.max(w, h);
-  let scaled = false;
-  let vscale = ""; // empty unless we need the safety scale-down
+// Encode ONE kept segment to its own MPEG-TS file. Input-seek (`-ss` before
+// `-i`) keeps this fast and low-memory; re-encoding makes the cut frame-accurate.
+// No scale/crop/reframe — the frame is passed through at its exact resolution.
+async function encodeSegment(
+  input: string, a: number, b: number, idx: number, dir: string, s: Settings, preset: string
+): Promise<string> {
+  const out = join(dir, `seg-${idx}-${Date.now()}.ts`);
+  const dur = Math.max(0.05, b - a);
+  const args = ["-y", "-ss", a.toFixed(3), "-i", input, "-t", dur.toFixed(3)];
+  if (dur > s.fade * 3) {
+    args.push("-af", `afade=t=in:st=0:d=${s.fade},afade=t=out:st=${(dur - s.fade).toFixed(3)}:d=${s.fade}`);
+  }
+  args.push(
+    "-c:v", "libx264", "-preset", preset, "-crf", "18", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "192k",
+    "-video_track_timescale", "90000", "-avoid_negative_ts", "make_zero",
+    "-max_muxing_queue_size", "1024", "-f", "mpegts", out
+  );
+  await run(FFMPEG, args);
+  return out;
+}
 
-  if (longSide > 1920) {
-    const f = 1920 / longSide;
-    // Scale preserving aspect ratio (no crop). -2 keeps the other dim even & in-ratio.
-    if (w >= h) vscale = `,scale=1920:-2`;
-    else vscale = `,scale=-2:1920`;
-    scaled = true;
+// Timeline-only render. Exact resolution/aspect/framing preserved (no downscale).
+// Memory stays bounded because segments are encoded one at a time and then joined
+// with a stream copy.
+async function renderFinal(
+  input: string, output: string, segs: [number, number][], s: Settings, original: number
+): Promise<boolean> {
+  // No cuts at all -> remux the original streams unchanged (exact quality, fast).
+  const noCuts = segs.length === 1 && segs[0][0] <= 0.05 && segs[0][1] >= original - 0.05;
+  if (noCuts) {
+    await run(FFMPEG, ["-y", "-i", input, "-c", "copy", "-movflags", "+faststart", output]);
+    return false;
   }
 
-  let filter = "";
-  segs.forEach(([a, b], i) => {
-    const dur = b - a;
-    // Video: trim (+ optional safety scale). No crop/reframe — framing untouched.
-    filter += `[0:v]trim=start=${a.toFixed(3)}:end=${b.toFixed(3)},setpts=PTS-STARTPTS${vscale}[v${i}];`;
-    // Audio: trim + tiny fades at the joins to avoid clicks.
-    let ac = `[0:a]atrim=start=${a.toFixed(3)}:end=${b.toFixed(3)},asetpts=PTS-STARTPTS`;
-    if (dur > s.fade * 3) ac += `,afade=t=in:st=0:d=${s.fade},afade=t=out:st=${(dur - s.fade).toFixed(3)}:d=${s.fade}`;
-    filter += `${ac}[a${i}];`;
-  });
-  segs.forEach((_, i) => (filter += `[v${i}][a${i}]`));
-  filter += `concat=n=${segs.length}:v=1:a=1[outv][ca]`;
+  // For very large frames (true 4K+) use a lighter preset so encoding stays well
+  // within memory; quality stays high at crf 18. Resolution is NOT changed.
+  const { w, h } = await getDims(input);
+  const preset = Math.max(w, h) > 1920 ? "superfast" : "veryfast";
+  const dir = dirname(output);
 
-  // High-quality re-encode (cuts require re-encoding). Preserve fps (no -r).
-  // crf 18 is visually near-lossless.
-  await run(FFMPEG, [
-    "-y", "-i", input, "-filter_complex", filter, "-map", "[outv]", "-map", "[ca]",
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "0",
-    "-max_muxing_queue_size", "1024",
-    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output,
-  ]);
-  return scaled;
+  const tsFiles: string[] = [];
+  try {
+    for (let i = 0; i < segs.length; i++) {
+      tsFiles.push(await encodeSegment(input, segs[i][0], segs[i][1], i, dir, s, preset));
+    }
+    const listPath = join(dir, `concat-${Date.now()}.txt`);
+    await writeFile(listPath, tsFiles.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"));
+    await run(FFMPEG, [
+      "-y", "-f", "concat", "-safe", "0", "-i", listPath,
+      "-c", "copy", "-movflags", "+faststart", output,
+    ]);
+    await unlink(listPath).catch(() => {});
+  } finally {
+    for (const f of tsFiles) await unlink(f).catch(() => {});
+  }
+  return false; // never scaled
 }
 
 function countCuts(segs: [number, number][], duration: number): number {
@@ -353,9 +413,12 @@ export async function cleanVideo(
         const smart = planFromTranscript(words, original, settings);
         if (smart.length) { segs = smart; mode = "smart"; }
       }
+      console.log(`[ENGINE] transcription ok: ${words.length} words -> mode=${mode}, segments=${segs.length}`);
     } catch (e) {
-      console.error("Layer 2 failed, falling back to audio:", e);
+      console.error("[ENGINE] transcription failed, using audio-only fallback:", (e as any)?.message || e);
     }
+  } else {
+    console.warn("[ENGINE] DEEPGRAM_API_KEY not set — running audio-only (silence) edits only.");
   }
 
   stage("Detecting pauses");
@@ -370,7 +433,7 @@ export async function cleanVideo(
   if (segs.length === 0) segs = [[0, original]];
 
   stage("Rendering");
-  const capped = await renderFinal(input, output, segs, settings);
+  const capped = await renderFinal(input, output, segs, settings, original);
   stage("Finalizing");
   for (const a of audioFiles) await unlink(a).catch(() => {});
 
