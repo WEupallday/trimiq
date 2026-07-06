@@ -32,10 +32,10 @@ export default async function Home() {
           <div className="flex items-center gap-3">
             {loggedIn ? (
               <Link
-                href="/dashboard"
+                href="/discover"
                 className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-ink transition hover:bg-white/90"
               >
-                Go to Dashboard
+                Open TrimIQ
               </Link>
             ) : (
               <>
@@ -79,10 +79,10 @@ export default async function Home() {
 
         <div className="animate-fade-up mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link
-            href={loggedIn ? "/dashboard" : "/signup"}
+            href={loggedIn ? "/discover" : "/signup"}
             className="group relative w-full rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-7 py-3.5 text-center font-medium shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40 sm:w-auto"
           >
-            {loggedIn ? "Go to Dashboard" : "Start Editing Free"}
+            {loggedIn ? "Find winning products" : "Start Editing Free"}
           </Link>
           <a
             href="#how"
@@ -242,10 +242,10 @@ export default async function Home() {
               Join creators saving hours every week with one-click clean edits.
             </p>
             <Link
-              href={loggedIn ? "/dashboard" : "/signup"}
+              href={loggedIn ? "/discover" : "/signup"}
               className="mt-8 inline-block rounded-xl bg-white px-8 py-3.5 font-medium text-ink transition hover:bg-white/90"
             >
-              {loggedIn ? "Go to Dashboard" : "Start Editing Free"}
+              {loggedIn ? "Open TrimIQ" : "Start Editing Free"}
             </Link>
           </div>
         </div>
