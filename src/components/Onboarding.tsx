@@ -10,7 +10,7 @@ export default function Onboarding() {
   const [err, setErr] = useState("");
 
   function go() {
-    router.push("/dashboard");
+    router.push("/discover");
     router.refresh();
   }
 
