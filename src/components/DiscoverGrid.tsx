@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -12,10 +12,10 @@ const CATEGORIES = [
 ];
 const WINDOWS = [7, 30, 90];
 const SORTS = [
-  { id: "trend", label: "Trend score" },
+  { id: "trend", label: "Hottest" },
   { id: "momentum", label: "Momentum" },
   { id: "gmv", label: "Est. GMV" },
-  { id: "velocity", label: "Velocity" },
+  { id: "velocity", label: "Sales" },
 ];
 
 export type DiscoverInitial = { window: number; category: string; sort: string; breakout: boolean; q: string };
@@ -32,19 +32,24 @@ function compact(n: number) {
   if (v >= 1_000) return (v / 1_000).toFixed(1) + "K";
   return String(Math.round(v));
 }
-function stateChip(state: string) {
-  const map: Record<string, string> = {
-    breakout: "bg-amber-500/20 text-amber-200 border-amber-400/40",
-    rising: "bg-emerald-500/15 text-emerald-200 border-emerald-400/30",
-    stable: "bg-white/10 text-white/60 border-white/15",
-    cooling: "bg-red-500/15 text-red-200 border-red-400/30",
-  };
-  return map[state] || map.stable;
+
+// ── Instant-read labels (UI layer only — the numbers still drive sorting). ──
+// Trend = "How popular is this right now?"
+function trendLabel(x: any): { icon: string; text: string; cls: string } {
+  const t = Number(x.trend) || 0;
+  if (x.isBreakout || t >= 75) return { icon: "🔥", text: "Hot", cls: "border-orange-400/40 bg-orange-500/15 text-orange-200" };
+  if (t >= 60) return { icon: "🚀", text: "Trending", cls: "border-amber-400/40 bg-amber-500/15 text-amber-200" };
+  if (t >= 45) return { icon: "📈", text: "Rising", cls: "border-emerald-400/35 bg-emerald-500/15 text-emerald-200" };
+  if (t >= 30) return { icon: "➖", text: "Stable", cls: "border-white/15 bg-white/[0.06] text-white/65" };
+  return { icon: "❄️", text: "Cold", cls: "border-sky-400/30 bg-sky-500/10 text-sky-200" };
 }
-function trendColor(t: number) {
-  if (t >= 70) return "text-amber-300";
-  if (t >= 50) return "text-emerald-300";
-  return "text-white/70";
+// Momentum = "Is this speeding up or slowing down?"
+function momentumLabel(x: any): { icon: string; text: string; cls: string } {
+  const g = Number(x.growth) || 0;
+  if (g >= 0.5) return { icon: "🚀", text: "Accelerating", cls: "border-emerald-400/40 bg-emerald-500/15 text-emerald-200" };
+  if (g > 0.15) return { icon: "📈", text: "Growing", cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" };
+  if (g >= -0.15) return { icon: "➖", text: "Flat", cls: "border-white/15 bg-white/[0.06] text-white/65" };
+  return { icon: "📉", text: "Slowing", cls: "border-orange-400/35 bg-orange-500/10 text-orange-200" };
 }
 
 export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; initial: DiscoverInitial }) {
@@ -121,14 +126,14 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
     setSeeding(false);
   }
 
-  const breakingCount = items.filter((x) => x.isBreakout).length;
+  const hotCount = items.filter((x) => x.isBreakout || Number(x.trend) >= 75).length;
 
   return (
     <div>
       {/* Summary strip */}
       <div className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-white/50">
         <span><span className="font-semibold text-white">{items.length}</span> products</span>
-        <span className="text-amber-300"><span className="font-semibold">{breakingCount}</span> breaking out 🚀</span>
+        <span className="text-orange-300"><span className="font-semibold">{hotCount}</span> hot 🔥</span>
         <span className="hidden sm:inline">US · updated continuously</span>
       </div>
 
@@ -155,8 +160,8 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
           {SORTS.map((s) => <option key={s.id} value={s.id} className="bg-neutral-900">Sort: {s.label}</option>)}
         </select>
         <button onClick={() => setBreakoutOnly((v) => !v)}
-          className={`rounded-xl border px-3.5 py-2 text-sm font-medium transition ${breakoutOnly ? "border-amber-400/50 bg-amber-500/15 text-amber-200" : "border-white/10 text-white/60 hover:text-white"}`}>
-          🚀 Breaking out
+          className={`rounded-xl border px-3.5 py-2 text-sm font-medium transition ${breakoutOnly ? "border-orange-400/50 bg-orange-500/15 text-orange-200" : "border-white/10 text-white/60 hover:text-white"}`}>
+          🔥 Hot only
         </button>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search products…"
           className="min-w-[8rem] flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm outline-none transition focus:border-indigo-400/50 sm:max-w-xs" />
@@ -170,73 +175,64 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
 
       {msg && <p className="mb-4 text-sm text-white/50">{msg}{isAdmin && items.length === 0 ? " — click “Refresh data”." : ""}</p>}
 
-      {/* Grid */}
+      {/* Grid — each card reads in under 2 seconds: name, two labels, GMV, Sales. */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {items.map((x) => (
-          <div key={x.id} className="glass group flex flex-col overflow-hidden rounded-3xl transition hover:border-white/20">
-            <div className="relative aspect-[4/5] overflow-hidden bg-white/[0.03]">
-              {x.imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={x.imageUrl} alt={x.title} loading="lazy"
-                  className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
-              ) : null}
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-              <span className={`absolute left-3 top-3 rounded-full border px-2.5 py-1 text-[11px] font-medium ${stateChip(x.state)}`}>
-                {x.state === "breakout" ? "🚀 Breaking out" : x.state[0].toUpperCase() + x.state.slice(1)}
-              </span>
-              <span className="absolute right-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] capitalize text-white/80 backdrop-blur">
-                {x.category}
-              </span>
-              <div className="absolute inset-x-3 bottom-3">
-                <p className="line-clamp-2 text-[15px] font-semibold leading-snug text-white drop-shadow">{x.title}</p>
-                <p className="mt-0.5 text-xs text-white/60">{x.sellerName}</p>
-              </div>
-            </div>
-
-            <div className="flex flex-1 flex-col p-5">
-              {/* Hero metrics — the numbers should catch the eye first */}
-              <div className="grid grid-cols-2 gap-4">
-                <Metric label="Trend score" value={String(x.trend)} valueClass={`text-3xl ${trendColor(x.trend)}`}
-                  sub={<GrowthPill g={x.growth} />} />
-                <Metric label="Momentum" value={String(x.momentum)} valueClass="text-3xl text-white" />
-                <Metric label="Est. GMV" value={money(x.gmv)} valueClass="text-2xl text-emerald-300" />
-                <Metric label="Sales" value={compact(x.sold)} valueClass="text-2xl text-white"
-                  sub={<span className="text-[11px] text-white/40">~{compact(x.velocity)}/day · ${(Math.round(x.price * 100) / 100)}</span>} />
+        {items.map((x) => {
+          const trend = trendLabel(x);
+          const mo = momentumLabel(x);
+          return (
+            <div key={x.id} className="glass group flex flex-col overflow-hidden rounded-3xl transition hover:border-white/20">
+              <div className="relative aspect-[4/5] overflow-hidden bg-white/[0.03]">
+                {x.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={x.imageUrl} alt={x.title} loading="lazy"
+                    className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
+                ) : null}
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent" />
+                <span className="absolute right-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] capitalize text-white/80 backdrop-blur">
+                  {x.category}
+                </span>
+                <div className="absolute inset-x-4 bottom-4">
+                  <p className="line-clamp-2 text-base font-semibold leading-snug text-white drop-shadow">{x.title}</p>
+                  <p className="mt-0.5 text-xs text-white/60">{x.sellerName}</p>
+                </div>
               </div>
 
-              {x.confidence < 0.7 && <p className="mt-3 text-[11px] text-white/30">Estimated (sold count is rounded)</p>}
+              <div className="flex flex-1 flex-col p-5">
+                {/* Instant meaning: two labels, no numbers to interpret */}
+                <div className="flex flex-wrap gap-2">
+                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-semibold ${trend.cls}`}>
+                    <span>{trend.icon}</span> {trend.text}
+                  </span>
+                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-semibold ${mo.cls}`}>
+                    <span>{mo.icon}</span> {mo.text}
+                  </span>
+                </div>
 
-              <Link
-                href={`/dashboard?product=${encodeURIComponent(x.id)}&title=${encodeURIComponent(x.title)}&from=${encodeURIComponent("/discover?" + qs())}`}
-                className="mt-4 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center text-sm font-semibold shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40">
-                Create ad with TrimIQ →
-              </Link>
+                {/* The two numbers that matter, big */}
+                <div className="mt-5 grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-white/40">Est. GMV</div>
+                    <div className="mt-1 text-3xl font-bold leading-none text-emerald-300">{money(x.gmv)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-white/40">Sales</div>
+                    <div className="mt-1 text-3xl font-bold leading-none text-white">{compact(x.sold)}</div>
+                  </div>
+                </div>
+
+                <Link
+                  href={`/dashboard?product=${encodeURIComponent(x.id)}&title=${encodeURIComponent(x.title)}&from=${encodeURIComponent("/discover?" + qs())}`}
+                  className="mt-5 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center text-sm font-semibold shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40">
+                  Create ad with TrimIQ →
+                </Link>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {loading && items.length === 0 && <p className="mt-6 text-sm text-white/40">Loading…</p>}
     </div>
-  );
-}
-
-function Metric({ label, value, valueClass, sub }: { label: string; value: string; valueClass: string; sub?: React.ReactNode }) {
-  return (
-    <div>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-white/40">{label}</div>
-      <div className={`mt-0.5 font-bold leading-none ${valueClass}`}>{value}</div>
-      {sub && <div className="mt-1">{sub}</div>}
-    </div>
-  );
-}
-
-function GrowthPill({ g }: { g: number }) {
-  const up = g > 0, down = g < 0;
-  const pct = Math.abs(Math.round(g * 100));
-  return (
-    <span className={`inline-flex items-center gap-0.5 text-xs font-semibold ${up ? "text-emerald-300" : down ? "text-red-300" : "text-white/40"}`}>
-      {up ? "▲" : down ? "▼" : "—"} {pct}%
-    </span>
   );
 }
