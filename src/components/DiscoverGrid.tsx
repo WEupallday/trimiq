@@ -17,7 +17,7 @@ const SORTS = [
   { id: "gmv", label: "Est. GMV" },
   { id: "velocity", label: "Sales" },
 ];
-const PAGE = 8; // how many feed items to reveal per scroll batch
+const PAGE = 12; // how many products to reveal per scroll batch
 
 export type DiscoverInitial = { window: number; category: string; sort: string; breakout: boolean; q: string };
 
@@ -130,7 +130,7 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
     if (!el) return;
     const io = new IntersectionObserver(
       (entries) => { if (entries[0].isIntersecting) setVisible((v) => Math.min(v + PAGE, items.length)); },
-      { rootMargin: "700px" }
+      { rootMargin: "800px" }
     );
     io.observe(el);
     return () => io.disconnect();
@@ -147,9 +147,8 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
       restored.current = true;
       const y = Number(sessionStorage.getItem("discoverScroll") || "0");
       if (y > 0) {
-        const need = Math.ceil((y + 1200) / 520);
-        setVisible((v) => Math.max(v, Math.min(need, items.length)));
-        setTimeout(() => globalThis.scrollTo({ top: y }), 40);
+        setVisible(items.length); // reveal all so the saved position exists
+        setTimeout(() => globalThis.scrollTo({ top: y }), 60);
       }
     }
   }, [loading, items.length]);
@@ -193,22 +192,23 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
   const from = `/discover?${qs()}`;
   const hotCount = items.filter((x) => x.isBreakout || Number(x.trend) >= 75).length;
   const shown = items.slice(0, visible);
+  const GRID = "grid grid-cols-1 gap-x-6 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
   return (
     <div>
       {/* Summary strip */}
-      <div className="mx-auto mb-5 flex max-w-2xl flex-wrap items-center gap-x-6 gap-y-2 text-sm text-white/50">
+      <div className="mb-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-white/50">
         <span><span className="font-semibold text-white">{items.length}</span> products</span>
         <span className="text-orange-300"><span className="font-semibold">{hotCount}</span> hot 🔥</span>
         {watch.length > 0 && <span className="text-white/60">★ {watch.length} saved</span>}
       </div>
 
       {/* Filter bar */}
-      <div className="sticky top-0 z-20 mx-auto mb-6 flex max-w-2xl flex-wrap items-center gap-2 rounded-2xl bg-ink/80 px-2 py-2 backdrop-blur">
+      <div className="sticky top-0 z-20 -mx-2 mb-6 flex flex-wrap items-center gap-2 rounded-2xl bg-ink/80 px-2 py-2 backdrop-blur">
         <div className="flex rounded-xl border border-white/10 bg-white/[0.04] p-0.5">
           {WINDOWS.map((w) => (
             <button key={w} onClick={() => setWindow(w)}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${window === w ? "bg-indigo-500/30 text-white" : "text-white/50 hover:text-white"}`}>
+              className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition ${window === w ? "bg-indigo-500/30 text-white" : "text-white/50 hover:text-white"}`}>
               {w}d
             </button>
           ))}
@@ -216,7 +216,7 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
         <div className="flex rounded-xl border border-white/10 bg-white/[0.04] p-0.5">
           {CATEGORIES.map((c) => (
             <button key={c.id} onClick={() => setCategory(c.id)}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${category === c.id ? "bg-indigo-500/30 text-white" : "text-white/50 hover:text-white"}`}>
+              className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition ${category === c.id ? "bg-indigo-500/30 text-white" : "text-white/50 hover:text-white"}`}>
               {c.label}
             </button>
           ))}
@@ -226,11 +226,11 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
           {SORTS.map((s) => <option key={s.id} value={s.id} className="bg-neutral-900">Sort: {s.label}</option>)}
         </select>
         <button onClick={() => setBreakoutOnly((v) => !v)}
-          className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${breakoutOnly ? "border-orange-400/50 bg-orange-500/15 text-orange-200" : "border-white/10 text-white/60 hover:text-white"}`}>
+          className={`rounded-xl border px-3.5 py-2 text-sm font-medium transition ${breakoutOnly ? "border-orange-400/50 bg-orange-500/15 text-orange-200" : "border-white/10 text-white/60 hover:text-white"}`}>
           🔥 Hot
         </button>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
-          className="min-w-[6rem] flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm outline-none transition focus:border-indigo-400/50" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search products…"
+          className="min-w-[8rem] flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm outline-none transition focus:border-indigo-400/50 sm:max-w-xs" />
         {isAdmin && (
           <button onClick={seed} disabled={seeding}
             className="rounded-xl border border-white/10 px-3 py-2 text-sm text-white/70 transition hover:text-white disabled:opacity-50">
@@ -239,30 +239,34 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
         )}
       </div>
 
-      {msg && <p className="mx-auto mb-4 max-w-2xl text-sm text-white/50">{msg}{isAdmin && items.length === 0 ? " — click “Refresh”." : ""}</p>}
+      {msg && <p className="mb-4 text-sm text-white/50">{msg}{isAdmin && items.length === 0 ? " — click “Refresh”." : ""}</p>}
 
-      {/* The feed */}
-      <div className="mx-auto flex max-w-2xl flex-col gap-6">
-        {loading && items.length === 0
-          ? Array.from({ length: 4 }).map((_, i) => <SkeletonTile key={i} />)
-          : shown.map((x) => (
-              <FeedTile
-                key={x.id}
-                x={x}
-                from={from}
-                saved={watch.includes(x.id)}
-                onOpen={() => openDetail(x)}
-                onSave={() => toggleWatch(x.id)}
-              />
-            ))}
+      {/* The marketplace grid */}
+      {loading && items.length === 0 ? (
+        <div className={GRID}>
+          {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
+      ) : (
+        <div className={GRID}>
+          {shown.map((x) => (
+            <ProductCard
+              key={x.id}
+              x={x}
+              from={from}
+              saved={watch.includes(x.id)}
+              onOpen={() => openDetail(x)}
+              onSave={() => toggleWatch(x.id)}
+            />
+          ))}
+        </div>
+      )}
 
-        {/* Infinite-scroll sentinel */}
-        {visible < items.length && (
-          <div ref={sentinel} className="flex flex-col gap-6">
-            <SkeletonTile />
-          </div>
-        )}
-      </div>
+      {/* Infinite-scroll sentinel */}
+      {visible < items.length && (
+        <div ref={sentinel} className={`mt-7 ${GRID}`}>
+          {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
+      )}
 
       {selected && (
         <DetailDrawer
@@ -279,56 +283,52 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
   );
 }
 
-// ─────────────────────────── Feed tile ───────────────────────────
-function FeedTile({ x, from, saved, onOpen, onSave }: { x: any; from: string; saved: boolean; onOpen: () => void; onSave: () => void }) {
+// ─────────────────────────── Product card (compact grid) ───────────────────────────
+function ProductCard({ x, from, saved, onOpen, onSave }: { x: any; from: string; saved: boolean; onOpen: () => void; onSave: () => void }) {
   const trend = trendLabel(x);
   const mo = momentumLabel(x);
   return (
-    <article className="glass overflow-hidden rounded-3xl transition hover:border-white/20">
+    <article className="glass flex flex-col overflow-hidden rounded-2xl transition hover:border-white/20">
       <button onClick={onOpen} className="group relative block w-full text-left">
-        <div className="relative aspect-video w-full overflow-hidden bg-white/[0.03]">
+        <div className="relative aspect-[4/5] w-full overflow-hidden bg-white/[0.03]">
           {x.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={x.imageUrl} alt={x.title} loading="lazy"
-              className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+              className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" />
           ) : null}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
-          <span className="absolute right-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] capitalize text-white/80 backdrop-blur">{x.category}</span>
-          <div className="absolute inset-x-4 bottom-3 flex items-end justify-between gap-3">
-            <div>
-              <h3 className="line-clamp-2 text-lg font-bold leading-tight text-white drop-shadow">{x.title}</h3>
-              <p className="mt-0.5 text-xs text-white/60">{x.sellerName}</p>
-            </div>
-            <span className="shrink-0 rounded-full bg-black/50 px-2.5 py-1 text-xs font-medium text-white/80 opacity-0 backdrop-blur transition group-hover:opacity-100">View →</span>
+          <span className="absolute right-2.5 top-2.5 rounded-full bg-black/50 px-2 py-0.5 text-[10px] capitalize text-white/80 backdrop-blur">{x.category}</span>
+          <div className="absolute inset-x-3 bottom-2.5">
+            <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white drop-shadow">{x.title}</h3>
+            <p className="mt-0.5 text-[11px] text-white/60">{x.sellerName}</p>
           </div>
         </div>
       </button>
 
-      <div className="p-5">
-        <div className="flex flex-wrap gap-2">
-          <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-semibold ${trend.cls}`}><span>{trend.icon}</span> {trend.text}</span>
-          <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-semibold ${mo.cls}`}><span>{mo.icon}</span> {mo.text}</span>
+      <div className="flex flex-1 flex-col p-4">
+        <div className="flex flex-wrap gap-1.5">
+          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${trend.cls}`}><span>{trend.icon}</span> {trend.text}</span>
+          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${mo.cls}`}><span>{mo.icon}</span> {mo.text}</span>
         </div>
 
-        <div className="mt-4 flex items-end gap-8">
+        <div className="mt-3 grid grid-cols-2 gap-3">
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-white/40">Est. GMV</div>
-            <div className="mt-1 text-4xl font-bold leading-none text-emerald-300">{money(x.gmv)}</div>
+            <div className="text-[10px] font-medium uppercase tracking-wide text-white/40">Est. GMV</div>
+            <div className="mt-0.5 text-2xl font-bold leading-none text-emerald-300">{money(x.gmv)}</div>
           </div>
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-white/40">Sales</div>
-            <div className="mt-1 text-3xl font-bold leading-none text-white">{compact(x.sold)}</div>
+            <div className="text-[10px] font-medium uppercase tracking-wide text-white/40">Sales</div>
+            <div className="mt-0.5 text-2xl font-bold leading-none text-white">{compact(x.sold)}</div>
           </div>
         </div>
 
-        <div className="mt-5 flex items-center gap-2">
+        <div className="mt-4 flex items-center gap-2">
           <Link href={createAdHref(x, from)}
-            className="flex-1 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center text-sm font-semibold shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40">
-            Create ad with TrimIQ →
+            className="flex-1 rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-2.5 text-center text-xs font-semibold shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40">
+            Create ad →
           </Link>
-          <button onClick={onOpen} className="rounded-xl border border-white/12 px-4 py-3 text-sm font-medium text-white/75 transition hover:bg-white/[0.06] hover:text-white">Details</button>
           <button onClick={onSave} aria-label={saved ? "Remove from watchlist" : "Save to watchlist"}
-            className={`rounded-xl border px-3.5 py-3 text-sm transition ${saved ? "border-amber-400/50 bg-amber-500/15 text-amber-200" : "border-white/12 text-white/50 hover:text-white"}`}>
+            className={`rounded-lg border px-3 py-2.5 text-sm transition ${saved ? "border-amber-400/50 bg-amber-500/15 text-amber-200" : "border-white/12 text-white/50 hover:text-white"}`}>
             {saved ? "★" : "☆"}
           </button>
         </div>
@@ -337,20 +337,20 @@ function FeedTile({ x, from, saved, onOpen, onSave }: { x: any; from: string; sa
   );
 }
 
-function SkeletonTile() {
+function SkeletonCard() {
   return (
-    <div className="glass overflow-hidden rounded-3xl">
-      <div className="aspect-video w-full animate-pulse bg-white/[0.05]" />
-      <div className="space-y-4 p-5">
-        <div className="flex gap-2">
-          <div className="h-7 w-20 animate-pulse rounded-full bg-white/[0.06]" />
-          <div className="h-7 w-24 animate-pulse rounded-full bg-white/[0.06]" />
+    <div className="glass flex flex-col overflow-hidden rounded-2xl">
+      <div className="aspect-[4/5] w-full animate-pulse bg-white/[0.05]" />
+      <div className="space-y-3 p-4">
+        <div className="flex gap-1.5">
+          <div className="h-5 w-16 animate-pulse rounded-full bg-white/[0.06]" />
+          <div className="h-5 w-20 animate-pulse rounded-full bg-white/[0.06]" />
         </div>
-        <div className="flex gap-8">
-          <div className="h-9 w-24 animate-pulse rounded bg-white/[0.06]" />
-          <div className="h-9 w-16 animate-pulse rounded bg-white/[0.06]" />
+        <div className="flex gap-3">
+          <div className="h-7 w-20 animate-pulse rounded bg-white/[0.06]" />
+          <div className="h-7 w-14 animate-pulse rounded bg-white/[0.06]" />
         </div>
-        <div className="h-11 w-full animate-pulse rounded-xl bg-white/[0.06]" />
+        <div className="h-9 w-full animate-pulse rounded-lg bg-white/[0.06]" />
       </div>
     </div>
   );
