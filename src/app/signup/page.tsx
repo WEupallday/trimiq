@@ -8,6 +8,6 @@ export const dynamic = "force-dynamic";
 
 export default async function SignupPage() {
   const session = await getSession();
-  if (session) redirect("/dashboard");
+  if (session) redirect("/discover");
   return <AuthForm mode="signup" />;
 }
