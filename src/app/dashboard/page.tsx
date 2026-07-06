@@ -13,9 +13,14 @@ import UploadStudio from "./UploadStudio";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: { title?: string; product?: string };
+}) {
   const session = await getSession();
   if (!session) redirect("/login");
+  const adProductTitle = typeof searchParams.title === "string" ? searchParams.title.slice(0, 120) : "";
 
   const user = await prisma.user.findUnique({ where: { email: session.email } });
   const plan = user?.plan ?? "free";
@@ -40,6 +45,7 @@ export default async function DashboardPage() {
             TrimIQ
           </Link>
           <div className="flex items-center gap-3">
+            <Link href="/discover" className="hidden text-sm text-white/60 transition hover:text-white sm:inline">Discover</Link>
             <span className="hidden text-sm text-white/50 sm:inline">{displayName}</span>
             {creatorBeta && (
               <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200">
@@ -60,6 +66,13 @@ export default async function DashboardPage() {
       </header>
 
       <section className="relative z-10 mx-auto max-w-5xl px-6 py-14">
+        {adProductTitle && (
+          <div className="mx-auto mb-6 max-w-2xl rounded-2xl border border-indigo-400/30 bg-indigo-500/10 p-4 text-center text-sm">
+            <span className="text-white/60">Creating an ad for </span>
+            <span className="font-medium text-indigo-200">{adProductTitle}</span>
+            <span className="text-white/60"> — upload your footage of it below and TrimIQ will clean it into a tight, post-ready ad.</span>
+          </div>
+        )}
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Clean a video</h1>
           <p className="mt-3 text-white/60">
