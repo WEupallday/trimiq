@@ -14,9 +14,9 @@ export default async function LoginPage({
   if (searchParams.token) return <ResetForm token={searchParams.token} />;
   // /login?reset=1 -> request a reset link
   if (searchParams.reset) return <ResetForm />;
-  // Already logged in? Never show the login form — go to the dashboard.
+  // Already logged in? Never show the login form — go to Discover (the home).
   const session = await getSession();
-  if (session) redirect("/dashboard");
+  if (session) redirect("/discover");
   // default -> normal login
   return <AuthForm mode="login" />;
 }
