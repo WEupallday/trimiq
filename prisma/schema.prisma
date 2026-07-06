@@ -53,3 +53,52 @@ model PasswordReset {
   expiresAt DateTime
   createdAt DateTime @default(now())
 }
+
+// ---------- Viral Product Intelligence (Discover) ----------
+// A tracked TikTok Shop product. Score/velocity/gmv fields are computed per
+// window (7/30/90d) from the append-only ProductSnapshot series.
+model ShopProduct {
+  id              String   @id @default(cuid())
+  tiktokProductId String   @unique
+  title           String
+  imageUrl        String?
+  productUrl      String?
+  sellerName      String?
+  category        String   // beauty | home | fitness
+  region          String   @default("US")
+  currency        String   @default("USD")
+  // latest observed
+  latestPrice     Float    @default(0)
+  latestSoldCount Int      @default(0)
+  // per-window derived metrics
+  trend7          Int      @default(0)
+  trend30         Int      @default(0)
+  trend90         Int      @default(0)
+  momentum7       Int      @default(0)
+  vel7            Float    @default(0) // units/day
+  vel30           Float    @default(0)
+  gmv7            Float    @default(0)
+  gmv30           Float    @default(0)
+  gmv90           Float    @default(0)
+  growth7         Float    @default(0)
+  state           String   @default("stable") // breakout|rising|stable|cooling
+  isBreakout      Boolean  @default(false)
+  creatorSpread   Int      @default(0)
+  confidence      Float    @default(1)
+  firstSeenAt     DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([region, category, trend7])
+  @@index([region, category, trend30])
+}
+
+model ProductSnapshot {
+  id         String   @id @default(cuid())
+  productId  String
+  capturedAt DateTime @default(now())
+  price      Float
+  soldLo     Int
+  confidence Float    @default(1)
+
+  @@index([productId, capturedAt])
+}
