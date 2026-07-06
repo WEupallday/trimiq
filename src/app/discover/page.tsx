@@ -32,7 +32,7 @@ export default async function DiscoverPage({
       <div className="pointer-events-none absolute top-[500px] -left-40 h-[380px] w-[380px] rounded-full bg-fuchsia-600/10 blur-[130px]" />
 
       <header className="relative z-20 border-b border-white/10">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <Link href="/discover" className="flex items-center gap-2 font-semibold">
             <Logo size={32} />
             TrimIQ
@@ -48,7 +48,7 @@ export default async function DiscoverPage({
         </div>
       </header>
 
-      <section className="relative z-10 mx-auto max-w-6xl px-6 py-10">
+      <section className="relative z-10 mx-auto max-w-7xl px-6 py-10">
         <div className="mb-8">
           <span className="glass inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs text-white/70">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Market intelligence
