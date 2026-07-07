@@ -199,6 +199,28 @@ class EchoTikProvider implements DiscoverProvider {
     return json;
   }
 
+  // EchoTik cover images live in private storage (direct URLs return AccessDenied).
+  // This endpoint returns temporary accessible URLs (24h) and does NOT consume quota.
+  private async resolveCovers(urls: string[]): Promise<Record<string, string>> {
+    const map: Record<string, string> = {};
+    const uniq = Array.from(new Set(urls)).filter((u) => u.indexOf("echosell-images.tos-ap-southeast-1.volces.com") >= 0);
+    for (let i = 0; i < uniq.length; i += 10) {
+      const batch = uniq.slice(i, i + 10);
+      try {
+        const j = await this.get("/api/v3/echotik/batch/cover/download", { cover_urls: batch.join(",") });
+        const d = j && j.data;
+        if (d && typeof d === "object") {
+          const ks = Object.keys(d);
+          for (let k = 0; k < ks.length; k++) {
+            const v = (d as any)[ks[k]];
+            if (typeof v === "string" && v.indexOf("http") === 0) map[ks[k]] = v;
+          }
+        }
+      } catch { /* leave unresolved; UI shows a placeholder */ }
+    }
+    return map;
+  }
+
   private async categoryMap(): Promise<Record<string, string>> {
     try {
       const j = await this.get("/api/v3/echotik/category/l1", { language: "en-US" });
@@ -259,6 +281,14 @@ class EchoTikProvider implements DiscoverProvider {
     }
     const chosen = items.slice(0, ECHOTIK_MAX_PRODUCTS);
 
+    // 1b) Resolve cover images to accessible URLs (free — no quota cost).
+    const rawCovers: string[] = [];
+    for (let i = 0; i < chosen.length; i++) {
+      const c = firstCoverUrl(chosen[i].cover_url);
+      if (c) rawCovers.push(c);
+    }
+    const coverMap = await this.resolveCovers(rawCovers);
+
     // 2) Attach real trend history (bounded concurrency to be gentle on the API).
     const out: ProductRecord[] = [];
     const CONC = 4;
@@ -269,10 +299,11 @@ class EchoTikProvider implements DiscoverProvider {
           const pid = String(it.product_id);
           const snapshots = await this.trendSnapshots(pid, it);
           const catName = cats[String(it.category_id)] || "";
+          const rawCover = firstCoverUrl(it.cover_url);
           const rec: ProductRecord = {
             tiktokProductId: pid,
             title: String(it.product_name || "Untitled product"),
-            imageUrl: firstCoverUrl(it.cover_url),
+            imageUrl: rawCover ? coverMap[rawCover] : undefined,
             productUrl: `https://shop.tiktok.com/view/product/${pid}`,
             sellerName: undefined, // list only exposes seller_id; enrich via seller/detail later
             category: classifyCategory(catName),
