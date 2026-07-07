@@ -35,7 +35,15 @@ function compact(n: number) {
 }
 function pctStr(g: number) {
   const v = Math.round((Number(g) || 0) * 100);
+  if (v > 999) return "+999%+"; // a 0→spike breakout produces huge ratios; the label carries the meaning
+  if (v < -99) return "−99%+";
   return (v > 0 ? "+" : "") + v + "%";
+}
+// Route external product images through our proxy (TikTok/EchoTik CDNs block hotlinking).
+function proxied(u?: string): string | undefined {
+  if (!u) return undefined;
+  if (u.charAt(0) === "/") return u; // already local
+  return `/api/img?u=${encodeURIComponent(u)}`;
 }
 
 // ── Instant-read labels (UI layer only — numbers still drive sorting). ──
@@ -270,7 +278,7 @@ function ProductCard({ x, from, saved, onOpen, onSave }: { x: any; from: string;
         <div className="relative aspect-[4/5] w-full overflow-hidden bg-white/[0.03]">
           {x.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={x.imageUrl} alt={x.title} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" />
+            <img src={proxied(x.imageUrl)} alt={x.title} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" />
           ) : null}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
           <span className="absolute right-2.5 top-2.5 rounded-full bg-black/50 px-2 py-0.5 text-[10px] capitalize text-white/80 backdrop-blur">{x.category}</span>
@@ -361,7 +369,7 @@ function DetailDrawer({ x, detail, loading, from, saved, onSave, onClose }: {
         <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-white/[0.03]">
           {x.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={x.imageUrl} alt={x.title} className="h-full w-full object-cover" />
+            <img src={proxied(x.imageUrl)} alt={x.title} className="h-full w-full object-cover" />
           ) : null}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 to-transparent" />
           <button onClick={onClose} aria-label="Close" className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70">✕</button>
