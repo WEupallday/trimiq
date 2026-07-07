@@ -5,6 +5,21 @@
 // run on a realistic MockProvider so the whole pipeline + UI work end-to-end.
 
 export type ProviderSnap = { capturedAt: Date; price: number; soldLo: number; confidence: number };
+
+// ── Future: creator/video intelligence (NOT yet populated by any provider). ──
+// The Product Detail page renders a "coming soon" section for this. A future
+// provider backed by the official TikTok Shop / Affiliate API or a licensed data
+// source (e.g. Kalodata / FastMoss / Shoplus) can fill `creators` with REAL public
+// videos; each videoUrl is embeddable via TikTok's public oEmbed. Until a real
+// source exists this stays undefined — we never fabricate creator data.
+export type CreatorVideo = {
+  creatorHandle: string; // @handle
+  videoUrl: string;      // public TikTok video URL
+  postedAt?: string;     // ISO date
+  views?: number;
+  likes?: number;
+};
+
 export type ProductRecord = {
   tiktokProductId: string;
   title: string;
@@ -16,6 +31,7 @@ export type ProductRecord = {
   currency: string;   // USD
   creatorSpread: number;
   snapshots: ProviderSnap[];
+  creators?: CreatorVideo[]; // optional; populated only when a real source is connected
 };
 
 export interface DiscoverProvider {
