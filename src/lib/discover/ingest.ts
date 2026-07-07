@@ -14,6 +14,7 @@ export async function ingestDiscover(): Promise<{ products: number; provider: st
   );
   const byId = new Map(scored.map((s) => [s.id, s]));
 
+  const keptIds: string[] = [];
   for (const r of records) {
     const s = byId.get(r.tiktokProductId);
     if (!s) continue;
@@ -44,6 +45,16 @@ export async function ingestDiscover(): Promise<{ products: number; provider: st
         productId: product.id, capturedAt: sn.capturedAt, price: sn.price, soldLo: sn.soldLo, confidence: sn.confidence,
       })),
     });
+    keptIds.push(product.id);
   }
+
+  // Prune anything not in the current feed (old mock rows, products that dropped out of
+  // the top set) so Discover reflects exactly the active provider's data. Guarded so a
+  // failed/empty fetch never wipes the catalog.
+  if (keptIds.length > 0) {
+    await prisma.productSnapshot.deleteMany({ where: { productId: { notIn: keptIds } } });
+    await prisma.shopProduct.deleteMany({ where: { id: { notIn: keptIds } } });
+  }
+
   return { products: records.length, provider: provider.name };
 }
