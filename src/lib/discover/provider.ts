@@ -152,6 +152,42 @@ function firstCoverUrl(raw: any): string | undefined {
   } catch { /* fall through */ }
   return typeof raw === "string" && raw.indexOf("http") === 0 ? raw : undefined;
 }
+// Pull source->dest cover pairs out of whatever shape the download endpoint returns.
+function collectCoverPairs(d: any, map: Record<string, string>): void {
+  if (!d) return;
+  const isHttp = (s: any) => typeof s === "string" && s.indexOf("http") === 0;
+  if (Array.isArray(d)) {
+    for (let i = 0; i < d.length; i++) {
+      const it = d[i];
+      if (it && typeof it === "object") {
+        const src = it.source_cover_url || it.src || it.cover_url || it.source;
+        const dest = it.dest_cover_url || it.dest || it.url || it.download_url;
+        if (isHttp(src) && isHttp(dest)) map[src] = dest;
+      }
+    }
+    return;
+  }
+  if (typeof d === "object") {
+    const ks = Object.keys(d);
+    for (let k = 0; k < ks.length; k++) {
+      const key = ks[k];
+      const v = d[key];
+      if (isHttp(key) && isHttp(v)) { map[key] = v; continue; }          // { "<src>": "<dest>" }
+      if (isHttp(key) && v && typeof v === "object") {                    // { "<src>": { dest_cover_url } }
+        const dest = v.dest_cover_url || v.dest || v.url;
+        if (isHttp(dest)) map[key] = dest;
+      }
+      if (typeof v === "string" && key.indexOf("http") !== 0 && v.indexOf(":http") > 0) {
+        // value like "<src>:<dest>" — split on the first ":https"
+        const idx = v.indexOf(":http");
+        const src = v.slice(0, idx);
+        const dest = v.slice(idx + 1);
+        if (isHttp(src) && isHttp(dest)) map[src] = dest;
+      }
+    }
+  }
+}
+
 // Fallback series if a product has no usable trend history: reconstruct coarse
 // cumulative points from the list's windowed increments (real numbers, lower
 // confidence because the spacing is not daily).
@@ -201,22 +237,23 @@ class EchoTikProvider implements DiscoverProvider {
 
   // EchoTik cover images live in private storage (direct URLs return AccessDenied).
   // This endpoint returns temporary accessible URLs (24h) and does NOT consume quota.
+  // The response shape isn't fully specced, so we parse defensively (array of pairs,
+  // map of src->dest string, or map of src->{dest}) and log the raw shape once.
   private async resolveCovers(urls: string[]): Promise<Record<string, string>> {
     const map: Record<string, string> = {};
-    const uniq = Array.from(new Set(urls)).filter((u) => u.indexOf("echosell-images.tos-ap-southeast-1.volces.com") >= 0);
+    const uniq = Array.from(new Set(urls)).filter((u) => u.indexOf("volces.com") >= 0);
     for (let i = 0; i < uniq.length; i += 10) {
       const batch = uniq.slice(i, i + 10);
       try {
         const j = await this.get("/api/v3/echotik/batch/cover/download", { cover_urls: batch.join(",") });
         const d = j && j.data;
-        if (d && typeof d === "object") {
-          const ks = Object.keys(d);
-          for (let k = 0; k < ks.length; k++) {
-            const v = (d as any)[ks[k]];
-            if (typeof v === "string" && v.indexOf("http") === 0) map[ks[k]] = v;
-          }
-        }
-      } catch { /* leave unresolved; UI shows a placeholder */ }
+        // eslint-disable-next-line no-console
+        console.log("ECHOTIK_COVER_RESP", Array.isArray(d) ? "array" : typeof d, JSON.stringify(d).slice(0, 600));
+        collectCoverPairs(d, map);
+      } catch (e: any) {
+        // eslint-disable-next-line no-console
+        console.log("ECHOTIK_COVER_ERR", e && e.message);
+      }
     }
     return map;
   }
