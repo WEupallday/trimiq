@@ -275,10 +275,13 @@ function ProductCard({ x, from, saved, onOpen, onSave }: { x: any; from: string;
   return (
     <article className="glass flex flex-col overflow-hidden rounded-2xl transition hover:border-white/20">
       <button onClick={onOpen} className="group relative block w-full text-left">
-        <div className="relative aspect-[4/5] w-full overflow-hidden bg-white/[0.03]">
+        <div className="relative aspect-[4/5] w-full overflow-hidden bg-gradient-to-br from-indigo-500/15 to-fuchsia-500/10">
+          <div className="pointer-events-none absolute inset-0 grid place-items-center text-4xl opacity-25">🛍️</div>
           {x.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={proxied(x.imageUrl)} alt={x.title} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" />
+            <img src={proxied(x.imageUrl)} alt={x.title} loading="lazy"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+              className="relative h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" />
           ) : null}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
           <span className="absolute right-2.5 top-2.5 rounded-full bg-black/50 px-2 py-0.5 text-[10px] capitalize text-white/80 backdrop-blur">{x.category}</span>
@@ -366,10 +369,13 @@ function DetailDrawer({ x, detail, loading, from, saved, onSave, onClose }: {
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-up" onClick={onClose} />
       <aside className="absolute right-0 top-0 flex h-full w-full max-w-lg flex-col overflow-y-auto border-l border-white/10 bg-panel shadow-2xl">
         {/* Hero */}
-        <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-white/[0.03]">
+        <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-gradient-to-br from-indigo-500/15 to-fuchsia-500/10">
+          <div className="pointer-events-none absolute inset-0 grid place-items-center text-5xl opacity-25">🛍️</div>
           {x.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={proxied(x.imageUrl)} alt={x.title} className="h-full w-full object-cover" />
+            <img src={proxied(x.imageUrl)} alt={x.title}
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+              className="relative h-full w-full object-cover" />
           ) : null}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 to-transparent" />
           <button onClick={onClose} aria-label="Close" className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70">✕</button>
