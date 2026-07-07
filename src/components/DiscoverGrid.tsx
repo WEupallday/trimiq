@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -17,7 +17,7 @@ const SORTS = [
   { id: "gmv", label: "Est. GMV" },
   { id: "velocity", label: "Sales" },
 ];
-const PAGE = 12; // how many products to reveal per scroll batch
+const PAGE = 12;
 
 export type DiscoverInitial = { window: number; category: string; sort: string; breakout: boolean; q: string };
 
@@ -33,10 +33,14 @@ function compact(n: number) {
   if (v >= 1_000) return (v / 1_000).toFixed(1) + "K";
   return String(Math.round(v));
 }
+function pctStr(g: number) {
+  const v = Math.round((Number(g) || 0) * 100);
+  return (v > 0 ? "+" : "") + v + "%";
+}
 
 // ── Instant-read labels (UI layer only — numbers still drive sorting). ──
 function trendLabel(x: any): { icon: string; text: string; cls: string } {
-  const t = Number(x.trend) || 0;
+  const t = Number(x.trend ?? x.trend7) || 0;
   if (x.isBreakout || t >= 75) return { icon: "🔥", text: "Hot", cls: "border-orange-400/40 bg-orange-500/15 text-orange-200" };
   if (t >= 60) return { icon: "🚀", text: "Trending", cls: "border-amber-400/40 bg-amber-500/15 text-amber-200" };
   if (t >= 45) return { icon: "📈", text: "Rising", cls: "border-emerald-400/35 bg-emerald-500/15 text-emerald-200" };
@@ -44,7 +48,7 @@ function trendLabel(x: any): { icon: string; text: string; cls: string } {
   return { icon: "❄️", text: "Cold", cls: "border-sky-400/30 bg-sky-500/10 text-sky-200" };
 }
 function momentumLabel(x: any): { icon: string; text: string; cls: string } {
-  const g = Number(x.growth) || 0;
+  const g = Number(x.growth ?? x.growth7) || 0;
   if (g >= 0.5) return { icon: "🚀", text: "Accelerating", cls: "border-emerald-400/40 bg-emerald-500/15 text-emerald-200" };
   if (g > 0.15) return { icon: "📈", text: "Growing", cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" };
   if (g >= -0.15) return { icon: "➖", text: "Flat", cls: "border-white/15 bg-white/[0.06] text-white/65" };
@@ -70,8 +74,8 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
   const [msg, setMsg] = useState("");
 
   const [watch, setWatch] = useState<string[]>([]);
-  const [selected, setSelected] = useState<any>(null); // grid row for the open drawer
-  const [detail, setDetail] = useState<any>(null); // { product, series }
+  const [selected, setSelected] = useState<any>(null);
+  const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   const restored = useRef(false);
@@ -102,7 +106,6 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
     setLoading(false);
   }, [qs]);
 
-  // Load watchlist once (client-side only — no backend change).
   useEffect(() => {
     try { setWatch(JSON.parse(localStorage.getItem("trimiqWatch") || "[]")); } catch {}
   }, []);
@@ -114,7 +117,6 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
     });
   }
 
-  // Debounced URL sync (so Back-to-Discover restores state) + reload.
   useEffect(() => {
     const t = setTimeout(() => {
       router.replace(`/discover?${qs()}`, { scroll: false });
@@ -124,7 +126,6 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [window, category, sort, breakoutOnly, q]);
 
-  // Infinite scroll: reveal more as the sentinel nears the viewport.
   useEffect(() => {
     const el = sentinel.current;
     if (!el) return;
@@ -136,7 +137,6 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
     return () => io.disconnect();
   }, [items.length]);
 
-  // Save + restore scroll position across the Create-Ad round trip.
   useEffect(() => {
     const onScroll = () => sessionStorage.setItem("discoverScroll", String(globalThis.scrollY));
     globalThis.addEventListener("scroll", onScroll, { passive: true });
@@ -147,7 +147,7 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
       restored.current = true;
       const y = Number(sessionStorage.getItem("discoverScroll") || "0");
       if (y > 0) {
-        setVisible(items.length); // reveal all so the saved position exists
+        setVisible(items.length);
         setTimeout(() => globalThis.scrollTo({ top: y }), 60);
       }
     }
@@ -165,7 +165,6 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
   }
   function closeDetail() { setSelected(null); setDetail(null); }
 
-  // Lock body scroll + close on Escape while the drawer is open.
   useEffect(() => {
     if (!selected) return;
     const prev = document.body.style.overflow;
@@ -196,14 +195,12 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
 
   return (
     <div>
-      {/* Summary strip */}
       <div className="mb-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-white/50">
         <span><span className="font-semibold text-white">{items.length}</span> products</span>
         <span className="text-orange-300"><span className="font-semibold">{hotCount}</span> hot 🔥</span>
         {watch.length > 0 && <span className="text-white/60">★ {watch.length} saved</span>}
       </div>
 
-      {/* Filter bar */}
       <div className="sticky top-0 z-20 -mx-2 mb-6 flex flex-wrap items-center gap-2 rounded-2xl bg-ink/80 px-2 py-2 backdrop-blur">
         <div className="flex rounded-xl border border-white/10 bg-white/[0.04] p-0.5">
           {WINDOWS.map((w) => (
@@ -241,43 +238,23 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
 
       {msg && <p className="mb-4 text-sm text-white/50">{msg}{isAdmin && items.length === 0 ? " — click “Refresh”." : ""}</p>}
 
-      {/* The marketplace grid */}
       {loading && items.length === 0 ? (
-        <div className={GRID}>
-          {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
-        </div>
+        <div className={GRID}>{Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}</div>
       ) : (
         <div className={GRID}>
           {shown.map((x) => (
-            <ProductCard
-              key={x.id}
-              x={x}
-              from={from}
-              saved={watch.includes(x.id)}
-              onOpen={() => openDetail(x)}
-              onSave={() => toggleWatch(x.id)}
-            />
+            <ProductCard key={x.id} x={x} from={from} saved={watch.includes(x.id)} onOpen={() => openDetail(x)} onSave={() => toggleWatch(x.id)} />
           ))}
         </div>
       )}
 
-      {/* Infinite-scroll sentinel */}
       {visible < items.length && (
-        <div ref={sentinel} className={`mt-7 ${GRID}`}>
-          {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
-        </div>
+        <div ref={sentinel} className={`mt-7 ${GRID}`}>{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>
       )}
 
       {selected && (
-        <DetailDrawer
-          x={selected}
-          detail={detail}
-          loading={detailLoading}
-          from={from}
-          saved={watch.includes(selected.id)}
-          onSave={() => toggleWatch(selected.id)}
-          onClose={closeDetail}
-        />
+        <DetailDrawer x={selected} detail={detail} loading={detailLoading} from={from}
+          saved={watch.includes(selected.id)} onSave={() => toggleWatch(selected.id)} onClose={closeDetail} />
       )}
     </div>
   );
@@ -293,8 +270,7 @@ function ProductCard({ x, from, saved, onOpen, onSave }: { x: any; from: string;
         <div className="relative aspect-[4/5] w-full overflow-hidden bg-white/[0.03]">
           {x.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={x.imageUrl} alt={x.title} loading="lazy"
-              className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" />
+            <img src={x.imageUrl} alt={x.title} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" />
           ) : null}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
           <span className="absolute right-2.5 top-2.5 rounded-full bg-black/50 px-2 py-0.5 text-[10px] capitalize text-white/80 backdrop-blur">{x.category}</span>
@@ -310,7 +286,6 @@ function ProductCard({ x, from, saved, onOpen, onSave }: { x: any; from: string;
           <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${trend.cls}`}><span>{trend.icon}</span> {trend.text}</span>
           <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${mo.cls}`}><span>{mo.icon}</span> {mo.text}</span>
         </div>
-
         <div className="mt-3 grid grid-cols-2 gap-3">
           <div>
             <div className="text-[10px] font-medium uppercase tracking-wide text-white/40">Est. GMV</div>
@@ -321,12 +296,8 @@ function ProductCard({ x, from, saved, onOpen, onSave }: { x: any; from: string;
             <div className="mt-0.5 text-2xl font-bold leading-none text-white">{compact(x.sold)}</div>
           </div>
         </div>
-
         <div className="mt-4 flex items-center gap-2">
-          <Link href={createAdHref(x, from)}
-            className="flex-1 rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-2.5 text-center text-xs font-semibold shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40">
-            Create ad →
-          </Link>
+          <Link href={createAdHref(x, from)} className="flex-1 rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-2.5 text-center text-xs font-semibold shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40">Create ad →</Link>
           <button onClick={onSave} aria-label={saved ? "Remove from watchlist" : "Save to watchlist"}
             className={`rounded-lg border px-3 py-2.5 text-sm transition ${saved ? "border-amber-400/50 bg-amber-500/15 text-amber-200" : "border-white/12 text-white/50 hover:text-white"}`}>
             {saved ? "★" : "☆"}
@@ -342,118 +313,192 @@ function SkeletonCard() {
     <div className="glass flex flex-col overflow-hidden rounded-2xl">
       <div className="aspect-[4/5] w-full animate-pulse bg-white/[0.05]" />
       <div className="space-y-3 p-4">
-        <div className="flex gap-1.5">
-          <div className="h-5 w-16 animate-pulse rounded-full bg-white/[0.06]" />
-          <div className="h-5 w-20 animate-pulse rounded-full bg-white/[0.06]" />
-        </div>
-        <div className="flex gap-3">
-          <div className="h-7 w-20 animate-pulse rounded bg-white/[0.06]" />
-          <div className="h-7 w-14 animate-pulse rounded bg-white/[0.06]" />
-        </div>
+        <div className="flex gap-1.5"><div className="h-5 w-16 animate-pulse rounded-full bg-white/[0.06]" /><div className="h-5 w-20 animate-pulse rounded-full bg-white/[0.06]" /></div>
+        <div className="flex gap-3"><div className="h-7 w-20 animate-pulse rounded bg-white/[0.06]" /><div className="h-7 w-14 animate-pulse rounded bg-white/[0.06]" /></div>
         <div className="h-9 w-full animate-pulse rounded-lg bg-white/[0.06]" />
       </div>
     </div>
   );
 }
 
-// ─────────────────────────── Detail drawer ───────────────────────────
+// ─────────────────────────── Rich Product Detail drawer ───────────────────────────
 function DetailDrawer({ x, detail, loading, from, saved, onSave, onClose }: {
   x: any; detail: any; loading: boolean; from: string; saved: boolean; onSave: () => void; onClose: () => void;
 }) {
   const trend = trendLabel(x);
   const mo = momentumLabel(x);
-  const product = detail?.product;
-  const series: { t: string; sold: number }[] = detail?.series || [];
-  const storeUrl: string | undefined = product?.productUrl;
+  const p = detail?.product;
+  const series: { t: string; sold: number; price: number }[] = detail?.series || [];
+
+  // Only real / derived values — fall back to the grid row before the detail loads.
+  const price = p?.latestPrice ?? x.price;
+  const units = p?.latestSoldCount ?? x.sold;
+  const vel7 = p?.vel7 ?? x.velocity;
+  const vel30 = p?.vel30;
+  const growth7 = p?.growth7 ?? x.growth;
+  const gmv7 = p?.gmv7 ?? x.gmv;
+  const gmv30 = p?.gmv30;
+  const gmv90 = p?.gmv90;
+  const trendScore = p?.trend7 ?? x.trend;
+  const momScore = p?.momentum7 ?? x.momentum;
+  const region = p?.region ?? "US";
+  const currency = p?.currency ?? "USD";
+  const seller = x.sellerName ?? p?.sellerName;
+  const storeUrl: string | undefined = p?.productUrl;
+  const confidence = p?.confidence ?? x.confidence ?? 1;
+
+  // Derived chart series from the real snapshot history.
+  const soldSeries = series.map((s) => Number(s.sold) || 0);
+  const priceSeries = series.map((s) => Number(s.price) || 0);
+  const dailySeries: number[] = [];
+  for (let i = 1; i < soldSeries.length; i++) dailySeries.push(Math.max(0, soldSeries[i] - soldSeries[i - 1]));
 
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-up" onClick={onClose} />
-      <aside className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-white/10 bg-panel shadow-2xl">
+      <aside className="absolute right-0 top-0 flex h-full w-full max-w-lg flex-col overflow-y-auto border-l border-white/10 bg-panel shadow-2xl">
+        {/* Hero */}
         <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-white/[0.03]">
           {x.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={x.imageUrl} alt={x.title} className="h-full w-full object-cover" />
           ) : null}
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-          <button onClick={onClose} aria-label="Close"
-            className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70">✕</button>
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 to-transparent" />
+          <button onClick={onClose} aria-label="Close" className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70">✕</button>
           <div className="absolute inset-x-5 bottom-4">
+            <div className="mb-2 flex flex-wrap gap-2">
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${trend.cls}`}><span>{trend.icon}</span> {trend.text}</span>
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${mo.cls}`}><span>{mo.icon}</span> {mo.text}</span>
+            </div>
             <h2 className="text-2xl font-bold leading-tight text-white drop-shadow">{x.title}</h2>
-            <p className="mt-1 text-sm text-white/70">{x.sellerName} · <span className="capitalize">{x.category}</span></p>
+            <p className="mt-1 text-sm text-white/70">{seller} · <span className="capitalize">{x.category}</span> · {money(price).replace("$", currency === "USD" ? "$" : currency + " ")}</p>
           </div>
         </div>
 
         <div className="flex flex-col gap-6 p-6">
-          <div className="flex flex-wrap gap-2">
-            <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-semibold ${trend.cls}`}><span>{trend.icon}</span> {trend.text}</span>
-            <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-semibold ${mo.cls}`}><span>{mo.icon}</span> {mo.text}</span>
+          {/* Primary actions up top */}
+          <div className="flex gap-2">
+            <Link href={createAdHref(x, from)} className="flex-1 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center text-sm font-semibold shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40">Create ad with TrimIQ →</Link>
+            <button onClick={onSave} aria-label="Save" className={`rounded-xl border px-4 text-sm font-medium transition ${saved ? "border-amber-400/50 bg-amber-500/15 text-amber-200" : "border-white/12 text-white/75 hover:bg-white/[0.06] hover:text-white"}`}>{saved ? "★" : "☆"}</button>
           </div>
 
-          <div className="flex items-end gap-8">
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-white/40">Est. GMV</div>
-              <div className="mt-1 text-4xl font-bold leading-none text-emerald-300">{money(x.gmv)}</div>
+          {/* Key metrics */}
+          <Section title="Product intelligence">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <MetricTile label="Est. GMV (30d)" value={money(gmv30 ?? gmv7)} accent="text-emerald-300" />
+              <MetricTile label="Units sold" value={compact(units)} />
+              <MetricTile label="Price" value={money(price)} />
+              <MetricTile label="Sales velocity" value={compact(vel7)} sub="units / day (7d)" />
+              <MetricTile label="Sales growth" value={pctStr(growth7)} accent={Number(growth7) >= 0 ? "text-emerald-300" : "text-orange-300"} sub="7d vs prior" />
+              <MetricTile label="Trend / Momentum" value={`${Math.round(trendScore)} / ${Math.round(momScore)}`} sub="score out of 100" />
             </div>
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-white/40">Sales</div>
-              <div className="mt-1 text-3xl font-bold leading-none text-white">{compact(x.sold)}</div>
+          </Section>
+
+          {/* GMV by timeframe */}
+          <Section title="Estimated GMV by window">
+            <div className="grid grid-cols-3 gap-3">
+              <MetricTile label="Last 7 days" value={money(gmv7)} accent="text-emerald-300" />
+              <MetricTile label="Last 30 days" value={money(gmv30 ?? gmv7)} accent="text-emerald-300" />
+              <MetricTile label="Last 90 days" value={money(gmv90 ?? gmv30 ?? gmv7)} accent="text-emerald-300" />
             </div>
-          </div>
+          </Section>
 
-          <div>
-            <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-white/40">Sales trend</div>
-            {loading ? (
-              <div className="h-20 w-full animate-pulse rounded-xl bg-white/[0.05]" />
-            ) : series.length > 1 ? (
-              <Sparkline series={series} />
-            ) : (
-              <p className="text-sm text-white/40">Not enough history yet.</p>
-            )}
-          </div>
+          {/* Historical charts */}
+          <Section title="History">
+            <ChartBlock title="Units sold (cumulative)" caption={compact(units) + " total"} loading={loading} values={soldSeries} color="rgb(52 211 153)" />
+            <ChartBlock title="Daily sales" caption={"~" + compact(vel7) + " / day"} loading={loading} values={dailySeries} color="rgb(129 140 248)" />
+            <ChartBlock title="Price history" caption={money(price)} loading={loading} values={priceSeries} color="rgb(251 191 36)" flat />
+          </Section>
 
-          <div className="flex flex-col gap-2">
-            <Link href={createAdHref(x, from)}
-              className="rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3.5 text-center text-sm font-semibold shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40">
-              Create ad with TrimIQ →
-            </Link>
-            <div className="flex gap-2">
-              <button onClick={onSave}
-                className={`flex-1 rounded-xl border py-3 text-sm font-medium transition ${saved ? "border-amber-400/50 bg-amber-500/15 text-amber-200" : "border-white/12 text-white/75 hover:bg-white/[0.06] hover:text-white"}`}>
-                {saved ? "★ Saved" : "☆ Save to watchlist"}
-              </button>
+          {/* Store */}
+          <Section title="Store">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm">
+              <Row k="Seller" v={seller || "—"} />
+              <Row k="Region" v={region} />
+              <Row k="Currency" v={currency} />
               {storeUrl && (
-                <a href={storeUrl} target="_blank" rel="noopener noreferrer"
-                  className="rounded-xl border border-white/12 px-4 py-3 text-sm font-medium text-white/75 transition hover:bg-white/[0.06] hover:text-white">
-                  View on store ↗
+                <a href={storeUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1 rounded-lg border border-white/12 px-3 py-2 text-sm font-medium text-white/80 transition hover:bg-white/[0.06] hover:text-white">
+                  View on TikTok Shop ↗
                 </a>
               )}
             </div>
-          </div>
+          </Section>
+
+          {/* Creator videos — REAL data not yet connected (intentionally empty). */}
+          <Section title="Creator videos">
+            <div className="rounded-xl border border-dashed border-white/15 bg-white/[0.02] p-4">
+              <p className="text-sm font-medium text-white/80">Coming soon</p>
+              <p className="mt-1 text-sm text-white/50">
+                Public TikTok creators posting about this product will appear here once a real creator-data source is connected
+                (official TikTok Shop / Affiliate API or a licensed provider). We don&apos;t show fabricated creator numbers.
+              </p>
+            </div>
+          </Section>
+
+          <p className="text-[11px] leading-relaxed text-white/35">
+            Figures are estimates derived from public sold-count movement over time
+            {confidence < 0.7 ? " (this product reports a bucketed/rounded sold count, so numbers are conservative)." : "."}
+            {" "}Creator, competition, and video metrics will populate when real-data providers are connected.
+          </p>
         </div>
       </aside>
     </div>
   );
 }
 
-function Sparkline({ series }: { series: { t: string; sold: number }[] }) {
-  const vals = series.map((s) => Number(s.sold) || 0);
-  const min = Math.min.apply(null, vals);
-  const max = Math.max.apply(null, vals);
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-white/40">{title}</h3>
+      {children}
+    </div>
+  );
+}
+function MetricTile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-white/40">{label}</div>
+      <div className={`mt-1 text-xl font-bold leading-none ${accent || "text-white"}`}>{value}</div>
+      {sub && <div className="mt-1 text-[10px] text-white/40">{sub}</div>}
+    </div>
+  );
+}
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-center justify-between border-b border-white/5 py-1.5 last:border-0">
+      <span className="text-white/45">{k}</span>
+      <span className="font-medium text-white/85">{v}</span>
+    </div>
+  );
+}
+function ChartBlock({ title, caption, values, color, loading, flat }: { title: string; caption: string; values: number[]; color: string; loading: boolean; flat?: boolean }) {
+  return (
+    <div className="mb-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 last:mb-0">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-medium text-white/60">{title}</span>
+        <span className="text-xs font-semibold text-white/80">{caption}</span>
+      </div>
+      {loading ? (
+        <div className="h-16 w-full animate-pulse rounded bg-white/[0.05]" />
+      ) : (
+        <AreaChart values={values} color={color} flat={flat} />
+      )}
+    </div>
+  );
+}
+function AreaChart({ values, color, flat }: { values: number[]; color: string; flat?: boolean }) {
+  if (!values || values.length < 2) return <p className="py-4 text-xs text-white/35">Not enough history yet.</p>;
+  const w = 340, h = 64;
+  const min = Math.min.apply(null, values);
+  const max = Math.max.apply(null, values);
   const range = max - min || 1;
-  const w = 340, h = 80, n = vals.length;
-  const pts = vals.map((v, i) => `${(i / (n - 1)) * w},${h - ((v - min) / range) * (h - 8) - 4}`).join(" ");
+  const y = (v: number) => h - ((v - min) / range) * (h - 8) - 4;
+  const pts = values.map((v, i) => `${(i / (values.length - 1)) * w},${flat ? y(v) : y(v)}`).join(" ");
   const areaPts = `0,${h} ${pts} ${w},${h}`;
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="h-20 w-full" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="spark" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="rgb(52 211 153)" stopOpacity="0.35" />
-          <stop offset="100%" stopColor="rgb(52 211 153)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={areaPts} fill="url(#spark)" />
-      <polyline points={pts} fill="none" stroke="rgb(52 211 153)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+    <svg viewBox={`0 0 ${w} ${h}`} className="h-16 w-full" preserveAspectRatio="none">
+      <polygon points={areaPts} fill={color} fillOpacity={0.14} />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
 }
