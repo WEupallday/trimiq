@@ -83,8 +83,8 @@ export async function GET(req: NextRequest) {
       total,
       count: free.length,
       products: free.map(mapRow),
-      // Image-only teasers for the locked pages (no titles, sellers, or metrics).
-      teasers: products.slice(FREE_LIMIT).map((x) => ({ imageUrl: x.imageUrl, category: x.category })),
+      // Image-only teasers for the locked pages (no titles, sellers, categories, or metrics).
+      teasers: products.slice(FREE_LIMIT).map((x) => ({ imageUrl: x.imageUrl })),
     });
   }
 
