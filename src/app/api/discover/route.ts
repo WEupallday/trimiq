@@ -28,6 +28,21 @@ export async function GET(req: NextRequest) {
   if (id) {
     const product = await prisma.shopProduct.findUnique({ where: { id } });
     if (!product) return NextResponse.json({ error: "Not found." }, { status: 404 });
+    if (isGuest) {
+      // Guests get identity/context only. The high-value analytics (velocity,
+      // growth, GMV windows, history series, store link) never leave the server.
+      const x: any = product;
+      return NextResponse.json({
+        locked: true,
+        product: {
+          id: x.id, title: x.title, imageUrl: x.imageUrl, sellerName: x.sellerName,
+          category: x.category, latestPrice: x.latestPrice, latestSoldCount: x.latestSoldCount,
+          region: x.region, currency: x.currency, state: x.state,
+          isBreakout: x.isBreakout, confidence: x.confidence,
+        },
+        series: [],
+      });
+    }
     const snaps = await prisma.productSnapshot.findMany({
       where: { productId: id }, orderBy: { capturedAt: "asc" }, take: 120,
     });
@@ -74,6 +89,20 @@ export async function GET(req: NextRequest) {
     growth: x.growth7, state: x.state, isBreakout: x.isBreakout, confidence: x.confidence,
   });
 
+  // Guests: quantize the label-driving scores to coarse buckets (the same
+  // information the visible badges convey) and drop precise analytics entirely.
+  const mapRowGuest = (x: any) => {
+    const row = mapRow(x);
+    const t = Number(row.trend) || 0;
+    const g = Number(row.growth) || 0;
+    return {
+      ...row,
+      trend: x.isBreakout || t >= 75 ? 80 : t >= 60 ? 65 : t >= 45 ? 50 : t >= 30 ? 35 : 15,
+      growth: g >= 0.5 ? 0.6 : g > 0.15 ? 0.3 : g >= -0.15 ? 0 : -0.3,
+      momentum: null, velocity: null,
+    };
+  };
+
   if (isGuest) {
     const free = products.slice(0, FREE_LIMIT);
     return NextResponse.json({
@@ -82,7 +111,7 @@ export async function GET(req: NextRequest) {
       freeLimit: FREE_LIMIT,
       total,
       count: free.length,
-      products: free.map(mapRow),
+      products: free.map(mapRowGuest),
       // Image-only teasers for the locked pages (no titles, sellers, categories, or metrics).
       teasers: products.slice(FREE_LIMIT).map((x) => ({ imageUrl: x.imageUrl })),
     });
