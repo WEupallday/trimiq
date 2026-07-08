@@ -9,11 +9,17 @@ export const dynamic = "force-dynamic";
 
 const WINDOWS = new Set([7, 30, 90]);
 
+// Grid limits. Guests can browse the first FREE_LIMIT products (2 pages x 12);
+// everything past that is returned only as image-teasers so the UI can show
+// blurred previews behind the sign-up overlay without leaking real data.
+const MAX = 200;
+const FREE_LIMIT = 24;
+
 // GET /api/discover                 -> product grid (filters/sort/window)
 // GET /api/discover?id=<productId>  -> single product + snapshot series (for detail)
 export async function GET(req: NextRequest) {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Please log in." }, { status: 401 });
+  const isGuest = !session;
 
   const p = req.nextUrl.searchParams;
 
@@ -50,20 +56,41 @@ export async function GET(req: NextRequest) {
     sort === "momentum" ? "momentum7" :
     `trend${window}`;
 
-  const products = await prisma.shopProduct.findMany({
-    where, orderBy: { [orderField]: "desc" } as any, take: 60,
+  const [products, matching] = await Promise.all([
+    prisma.shopProduct.findMany({
+      where, orderBy: { [orderField]: "desc" } as any, take: MAX,
+    }),
+    prisma.shopProduct.count({ where }),
+  ]);
+
+  const total = Math.min(matching, MAX);
+
+  const mapRow = (x: any) => ({
+    id: x.id, title: x.title, imageUrl: x.imageUrl, sellerName: x.sellerName,
+    category: x.category, price: x.latestPrice, sold: x.latestSoldCount,
+    trend: (x as any)[`trend${window}`], momentum: x.momentum7,
+    velocity: window === 7 ? x.vel7 : x.vel30,
+    gmv: (x as any)[`gmv${window}`],
+    growth: x.growth7, state: x.state, isBreakout: x.isBreakout, confidence: x.confidence,
   });
 
+  if (isGuest) {
+    const free = products.slice(0, FREE_LIMIT);
+    return NextResponse.json({
+      window, category, region, sort,
+      guest: true,
+      freeLimit: FREE_LIMIT,
+      total,
+      count: free.length,
+      products: free.map(mapRow),
+      // Image-only teasers for the locked pages (no titles, sellers, or metrics).
+      teasers: products.slice(FREE_LIMIT).map((x) => ({ imageUrl: x.imageUrl, category: x.category })),
+    });
+  }
+
   return NextResponse.json({
-    window, category, region, sort, count: products.length,
-    products: products.map((x) => ({
-      id: x.id, title: x.title, imageUrl: x.imageUrl, sellerName: x.sellerName,
-      category: x.category, price: x.latestPrice, sold: x.latestSoldCount,
-      trend: (x as any)[`trend${window}`], momentum: x.momentum7,
-      velocity: window === 7 ? x.vel7 : x.vel30,
-      gmv: (x as any)[`gmv${window}`],
-      growth: x.growth7, state: x.state, isBreakout: x.isBreakout, confidence: x.confidence,
-    })),
+    window, category, region, sort, total, count: products.length,
+    products: products.map(mapRow),
   });
 }
 
