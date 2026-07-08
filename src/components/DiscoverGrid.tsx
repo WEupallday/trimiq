@@ -281,7 +281,7 @@ export default function DiscoverGrid({ isAdmin, isGuest = false, initial }: { is
       {isGuest && !isLockedPage && lockedCount > 0 && (
         <p className="mt-4 text-center text-sm text-white/45">
           <LockIcon className="mr-1.5 inline-block h-3.5 w-3.5 align-[-2px]" />
-          {lockedCount}+ more products available after free sign-up
+          More products available after free sign-up
         </p>
       )}
 
@@ -359,7 +359,7 @@ function LockedPage({ teasers, lockedCount }: { teasers: any[]; lockedCount: num
           </div>
           {lockedCount > 0 && (
             <span className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-3 py-1 text-xs font-semibold text-indigo-200">
-              ✨ {lockedCount}+ more products available after free sign-up
+              ✨ More products available after free sign-up
             </span>
           )}
           <h3 className="mt-3 text-2xl font-bold text-white">Unlock More Products</h3>
