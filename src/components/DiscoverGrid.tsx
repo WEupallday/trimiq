@@ -19,7 +19,7 @@ const SORTS = [
 ];
 const PAGE = 12;
 // Guests can browse this many pages free; the rest are locked behind sign-up.
-const FREE_PAGES = 2;
+const FREE_PAGES = 1;
 const GRID = "grid grid-cols-1 gap-x-6 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
 export type DiscoverInitial = { window: number; category: string; sort: string; breakout: boolean; q: string };
