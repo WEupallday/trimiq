@@ -544,29 +544,50 @@ function DetailDrawer({ x, detail, loading, from, isGuest, saved, onSave, onClos
           {/* Key metrics */}
           <Section title="Product intelligence">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <MetricTile label="Est. GMV (30d)" value={money(gmv30 ?? gmv7)} accent="text-emerald-300" />
+              {isGuest ? <LockedTile label="Est. GMV (30d)" /> : <MetricTile label="Est. GMV (30d)" value={money(gmv30 ?? gmv7)} accent="text-emerald-300" />}
               <MetricTile label="Units sold" value={compact(units)} />
               <MetricTile label="Price" value={money(price)} />
-              <MetricTile label="Sales velocity" value={compact(vel7)} sub="units / day (7d)" />
-              <MetricTile label="Sales growth" value={pctStr(growth7)} accent={Number(growth7) >= 0 ? "text-emerald-300" : "text-orange-300"} sub="7d vs prior" />
-              <MetricTile label="Trend / Momentum" value={`${Math.round(trendScore)} / ${Math.round(momScore)}`} sub="score out of 100" />
+              {isGuest ? <LockedTile label="Sales velocity" sub="units / day (7d)" /> : <MetricTile label="Sales velocity" value={compact(vel7)} sub="units / day (7d)" />}
+              {isGuest ? <LockedTile label="Sales growth" sub="7d vs prior" /> : <MetricTile label="Sales growth" value={pctStr(growth7)} accent={Number(growth7) >= 0 ? "text-emerald-300" : "text-orange-300"} sub="7d vs prior" />}
+              {isGuest ? <LockedTile label="Trend / Momentum" sub="score out of 100" /> : <MetricTile label="Trend / Momentum" value={`${Math.round(trendScore)} / ${Math.round(momScore)}`} sub="score out of 100" />}
             </div>
+            {isGuest && <UnlockBanner />}
           </Section>
 
           {/* GMV by timeframe */}
           <Section title="Estimated GMV by window">
             <div className="grid grid-cols-3 gap-3">
-              <MetricTile label="Last 7 days" value={money(gmv7)} accent="text-emerald-300" />
-              <MetricTile label="Last 30 days" value={money(gmv30 ?? gmv7)} accent="text-emerald-300" />
-              <MetricTile label="Last 90 days" value={money(gmv90 ?? gmv30 ?? gmv7)} accent="text-emerald-300" />
+              {isGuest ? (
+                <>
+                  <LockedTile label="Last 7 days" />
+                  <LockedTile label="Last 30 days" />
+                  <LockedTile label="Last 90 days" />
+                </>
+              ) : (
+                <>
+                  <MetricTile label="Last 7 days" value={money(gmv7)} accent="text-emerald-300" />
+                  <MetricTile label="Last 30 days" value={money(gmv30 ?? gmv7)} accent="text-emerald-300" />
+                  <MetricTile label="Last 90 days" value={money(gmv90 ?? gmv30 ?? gmv7)} accent="text-emerald-300" />
+                </>
+              )}
             </div>
           </Section>
 
           {/* Historical charts */}
           <Section title="History">
-            <ChartBlock title="Units sold (cumulative)" caption={compact(units) + " total"} loading={loading} values={soldSeries} color="rgb(52 211 153)" />
-            <ChartBlock title="Daily sales" caption={"~" + compact(vel7) + " / day"} loading={loading} values={dailySeries} color="rgb(129 140 248)" />
-            <ChartBlock title="Price history" caption={money(price)} loading={loading} values={priceSeries} color="rgb(251 191 36)" flat />
+            {isGuest ? (
+              <>
+                <LockedChart title="Units sold (cumulative)" />
+                <LockedChart title="Daily sales" />
+                <LockedChart title="Price history" />
+              </>
+            ) : (
+              <>
+                <ChartBlock title="Units sold (cumulative)" caption={compact(units) + " total"} loading={loading} values={soldSeries} color="rgb(52 211 153)" />
+                <ChartBlock title="Daily sales" caption={"~" + compact(vel7) + " / day"} loading={loading} values={dailySeries} color="rgb(129 140 248)" />
+                <ChartBlock title="Price history" caption={money(price)} loading={loading} values={priceSeries} color="rgb(251 191 36)" flat />
+              </>
+            )}
           </Section>
 
           {/* Store */}
@@ -575,11 +596,15 @@ function DetailDrawer({ x, detail, loading, from, isGuest, saved, onSave, onClos
               <Row k="Seller" v={seller || "—"} />
               <Row k="Region" v={region} />
               <Row k="Currency" v={currency} />
-              {storeUrl && (
+              {isGuest ? (
+                <span className="mt-3 inline-flex cursor-default select-none items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-medium text-white/40">
+                  View on TikTok Shop <LockIcon className="h-3.5 w-3.5" />
+                </span>
+              ) : storeUrl ? (
                 <a href={storeUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1 rounded-lg border border-white/12 px-3 py-2 text-sm font-medium text-white/80 transition hover:bg-white/[0.06] hover:text-white">
                   View on TikTok Shop ↗
                 </a>
-              )}
+              ) : null}
             </div>
           </Section>
 
@@ -601,6 +626,48 @@ function DetailDrawer({ x, detail, loading, from, isGuest, saved, onSave, onClos
           </p>
         </div>
       </aside>
+    </div>
+  );
+}
+
+// Locked treatments for guests. Real values are stripped server-side; the
+// blurred figures below are static decoration, not data.
+function LockedTile({ label, sub }: { label: string; sub?: string }) {
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-white/40">{label}</div>
+      <div className="mt-1 select-none text-xl font-bold leading-none text-white/60 blur-[5px]" aria-hidden>88.8K</div>
+      {sub && <div className="mt-1 text-[10px] text-white/40">{sub}</div>}
+      <span className="absolute right-2 top-2 grid h-5 w-5 place-items-center rounded-full bg-black/40">
+        <LockIcon className="h-3 w-3 text-white/70" />
+      </span>
+    </div>
+  );
+}
+function LockedChart({ title }: { title: string }) {
+  const pts = "0,58 34,52 68,54 102,44 136,46 170,36 204,38 238,26 272,30 306,16 340,10";
+  return (
+    <div className="relative mb-3 overflow-hidden rounded-xl border border-white/10 bg-white/[0.03] p-3 last:mb-0">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-medium text-white/60">{title}</span>
+        <span className="grid h-5 w-5 place-items-center rounded-full bg-black/40"><LockIcon className="h-3 w-3 text-white/70" /></span>
+      </div>
+      <svg viewBox="0 0 340 64" className="h-16 w-full select-none blur-[6px]" preserveAspectRatio="none" aria-hidden>
+        <polygon points={`0,64 ${pts} 340,64`} fill="rgb(129 140 248)" fillOpacity={0.14} />
+        <polyline points={pts} fill="none" stroke="rgb(129 140 248)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+    </div>
+  );
+}
+function UnlockBanner() {
+  return (
+    <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-indigo-400/25 bg-indigo-500/10 p-3">
+      <p className="text-xs leading-relaxed text-white/70">
+        <span className="font-semibold text-white">Unlock full analytics</span> — velocity, growth, GMV windows, and history charts are free with an account.
+      </p>
+      <Link href="/signup" className="shrink-0 rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/45">
+        Sign Up Free
+      </Link>
     </div>
   );
 }
