@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import Logo from "@/components/Logo";
 import LogoutButton from "@/components/LogoutButton";
 import { getSession } from "@/lib/auth";
@@ -13,9 +12,10 @@ export default async function DiscoverPage({
 }: {
   searchParams: { window?: string; category?: string; sort?: string; breakout?: string; q?: string };
 }) {
+  // Discover is open to guests: they can browse the first two pages free, and
+  // the rest of the library is shown locked behind a sign-up overlay.
   const session = await getSession();
-  if (!session) redirect("/login");
-  const admin = await isAdminEmail(session.email);
+  const admin = session ? await isAdminEmail(session.email) : false;
 
   const win = Number(searchParams.window);
   const initial: DiscoverInitial = {
@@ -37,14 +37,23 @@ export default async function DiscoverPage({
             <Logo size={32} />
             TrimIQ
           </Link>
-          <div className="flex items-center gap-3">
-            <span className="rounded-lg bg-white/[0.06] px-3 py-1.5 text-sm font-medium text-white">Discover</span>
-            <Link href="/dashboard" className="text-sm text-white/55 transition hover:text-white">Editor</Link>
-            {admin && (
-              <Link href="/admin" className="rounded-lg border border-indigo-400/40 px-3 py-1.5 text-xs font-medium text-indigo-200 transition hover:bg-indigo-500/10">Admin</Link>
-            )}
-            <LogoutButton />
-          </div>
+          {session ? (
+            <div className="flex items-center gap-3">
+              <span className="rounded-lg bg-white/[0.06] px-3 py-1.5 text-sm font-medium text-white">Discover</span>
+              <Link href="/dashboard" className="text-sm text-white/55 transition hover:text-white">Editor</Link>
+              {admin && (
+                <Link href="/admin" className="rounded-lg border border-indigo-400/40 px-3 py-1.5 text-xs font-medium text-indigo-200 transition hover:bg-indigo-500/10">Admin</Link>
+              )}
+              <LogoutButton />
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <Link href="/login" className="text-sm text-white/55 transition hover:text-white">Log in</Link>
+              <Link href="/signup" className="rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-2 text-sm font-semibold shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40">
+                Sign up free
+              </Link>
+            </div>
+          )}
         </div>
       </header>
 
@@ -58,7 +67,7 @@ export default async function DiscoverPage({
             Trending TikTok Shop products, ranked by real momentum — not just total sales. Spot a winner, then turn it into an ad in one click.
           </p>
         </div>
-        <DiscoverGrid isAdmin={admin} initial={initial} />
+        <DiscoverGrid isAdmin={admin} isGuest={!session} initial={initial} />
       </section>
     </main>
   );
