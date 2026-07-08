@@ -18,6 +18,9 @@ const SORTS = [
   { id: "velocity", label: "Sales" },
 ];
 const PAGE = 12;
+// Guests can browse this many pages free; the rest are locked behind sign-up.
+const FREE_PAGES = 2;
+const GRID = "grid grid-cols-1 gap-x-6 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
 export type DiscoverInitial = { window: number; category: string; sort: string; breakout: boolean; q: string };
 
@@ -63,11 +66,21 @@ function momentumLabel(x: any): { icon: string; text: string; cls: string } {
   return { icon: "📉", text: "Slowing", cls: "border-orange-400/35 bg-orange-500/10 text-orange-200" };
 }
 
-function createAdHref(x: any, from: string) {
+function createAdHref(x: any, from: string, isGuest: boolean) {
+  if (isGuest) return "/signup";
   return `/dashboard?product=${encodeURIComponent(x.id)}&title=${encodeURIComponent(x.title)}&from=${encodeURIComponent(from)}`;
 }
 
-export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; initial: DiscoverInitial }) {
+function LockIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <rect x="4" y="11" width="16" height="10" rx="2.5" />
+      <path d="M8 11V7a4 4 0 1 1 8 0v4" />
+    </svg>
+  );
+}
+
+export default function DiscoverGrid({ isAdmin, isGuest = false, initial }: { isAdmin: boolean; isGuest?: boolean; initial: DiscoverInitial }) {
   const router = useRouter();
   const [window, setWindow] = useState(initial.window);
   const [category, setCategory] = useState(initial.category);
@@ -76,7 +89,9 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
   const [q, setQ] = useState(initial.q);
 
   const [items, setItems] = useState<any[]>([]);
-  const [visible, setVisible] = useState(PAGE);
+  const [teasers, setTeasers] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
   const [msg, setMsg] = useState("");
@@ -87,7 +102,7 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
   const [detailLoading, setDetailLoading] = useState(false);
 
   const restored = useRef(false);
-  const sentinel = useRef<HTMLDivElement | null>(null);
+  const topRef = useRef<HTMLDivElement | null>(null);
 
   const qs = useCallback(() => {
     const p = new URLSearchParams();
@@ -106,7 +121,9 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
       const data = await res.json();
       const list = Array.isArray(data.products) ? data.products : [];
       setItems(list);
-      setVisible(PAGE);
+      setTeasers(Array.isArray(data.teasers) ? data.teasers : []);
+      setTotal(Number(data.total) || list.length);
+      setPage(1);
       setMsg(list.length ? "" : "No products loaded yet.");
     } catch {
       setMsg("Couldn't load products.");
@@ -135,17 +152,6 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
   }, [window, category, sort, breakoutOnly, q]);
 
   useEffect(() => {
-    const el = sentinel.current;
-    if (!el) return;
-    const io = new IntersectionObserver(
-      (entries) => { if (entries[0].isIntersecting) setVisible((v) => Math.min(v + PAGE, items.length)); },
-      { rootMargin: "800px" }
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [items.length]);
-
-  useEffect(() => {
     const onScroll = () => sessionStorage.setItem("discoverScroll", String(globalThis.scrollY));
     globalThis.addEventListener("scroll", onScroll, { passive: true });
     return () => globalThis.removeEventListener("scroll", onScroll);
@@ -154,10 +160,7 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
     if (!loading && items.length && !restored.current) {
       restored.current = true;
       const y = Number(sessionStorage.getItem("discoverScroll") || "0");
-      if (y > 0) {
-        setVisible(items.length);
-        setTimeout(() => globalThis.scrollTo({ top: y }), 60);
-      }
+      if (y > 0) setTimeout(() => globalThis.scrollTo({ top: y }), 60);
     }
   }, [loading, items.length]);
 
@@ -196,15 +199,28 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
     setSeeding(false);
   }
 
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(total / PAGE));
+  const freePages = isGuest ? Math.min(FREE_PAGES, totalPages) : totalPages;
+  const isLockedPage = isGuest && page > freePages;
+  const lockedCount = isGuest ? Math.max(0, total - freePages * PAGE) : 0;
+
+  function goToPage(p: number) {
+    const next = Math.min(Math.max(1, p), totalPages);
+    setPage(next);
+    const el = topRef.current;
+    if (el) globalThis.scrollTo({ top: el.getBoundingClientRect().top + globalThis.scrollY - 24, behavior: "smooth" });
+  }
+
   const from = `/discover?${qs()}`;
   const hotCount = items.filter((x) => x.isBreakout || Number(x.trend) >= 75).length;
-  const shown = items.slice(0, visible);
-  const GRID = "grid grid-cols-1 gap-x-6 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+  const shown = isLockedPage ? [] : items.slice((page - 1) * PAGE, page * PAGE);
+  const pageTeasers = isLockedPage ? teasers.slice((page - 1) * PAGE - items.length, page * PAGE - items.length) : [];
 
   return (
-    <div>
+    <div ref={topRef}>
       <div className="mb-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-white/50">
-        <span><span className="font-semibold text-white">{items.length}</span> products</span>
+        <span><span className="font-semibold text-white">{total}</span> products</span>
         <span className="text-orange-300"><span className="font-semibold">{hotCount}</span> hot 🔥</span>
         {watch.length > 0 && <span className="text-white/60">★ {watch.length} saved</span>}
       </div>
@@ -248,28 +264,157 @@ export default function DiscoverGrid({ isAdmin, initial }: { isAdmin: boolean; i
 
       {loading && items.length === 0 ? (
         <div className={GRID}>{Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}</div>
+      ) : isLockedPage ? (
+        <LockedPage teasers={pageTeasers} lockedCount={lockedCount} />
       ) : (
         <div className={GRID}>
           {shown.map((x) => (
-            <ProductCard key={x.id} x={x} from={from} saved={watch.includes(x.id)} onOpen={() => openDetail(x)} onSave={() => toggleWatch(x.id)} />
+            <ProductCard key={x.id} x={x} from={from} isGuest={isGuest} saved={watch.includes(x.id)} onOpen={() => openDetail(x)} onSave={() => toggleWatch(x.id)} />
           ))}
         </div>
       )}
 
-      {visible < items.length && (
-        <div ref={sentinel} className={`mt-7 ${GRID}`}>{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>
+      {!loading && totalPages > 1 && (
+        <Pagination page={page} totalPages={totalPages} freePages={freePages} isGuest={isGuest} onGo={goToPage} />
+      )}
+
+      {isGuest && !isLockedPage && lockedCount > 0 && (
+        <p className="mt-4 text-center text-sm text-white/45">
+          <LockIcon className="mr-1.5 inline-block h-3.5 w-3.5 align-[-2px]" />
+          {lockedCount}+ more products available after free sign-up
+        </p>
       )}
 
       {selected && (
-        <DetailDrawer x={selected} detail={detail} loading={detailLoading} from={from}
+        <DetailDrawer x={selected} detail={detail} loading={detailLoading} from={from} isGuest={isGuest}
           saved={watch.includes(selected.id)} onSave={() => toggleWatch(selected.id)} onClose={closeDetail} />
       )}
     </div>
   );
 }
 
+// Pagination bar
+function pageList(current: number, total: number): (number | string)[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const out: (number | string)[] = [];
+  let prev = 0;
+  for (let i = 1; i <= total; i++) {
+    if (i === 1 || i === total || Math.abs(i - current) <= 1) {
+      if (i - prev > 1) out.push("...");
+      out.push(i);
+      prev = i;
+    }
+  }
+  return out;
+}
+
+function Pagination({ page, totalPages, freePages, isGuest, onGo }: {
+  page: number; totalPages: number; freePages: number; isGuest: boolean; onGo: (p: number) => void;
+}) {
+  const base = "grid h-10 min-w-[2.5rem] place-items-center rounded-xl border px-2 text-sm font-medium transition";
+  return (
+    <nav aria-label="Product pages" className="mt-10 flex flex-wrap items-center justify-center gap-2">
+      <button onClick={() => onGo(page - 1)} disabled={page <= 1} aria-label="Previous page"
+        className={`${base} border-white/10 bg-white/[0.04] text-white/60 hover:border-white/25 hover:text-white disabled:pointer-events-none disabled:opacity-35`}>
+        ←
+      </button>
+      {pageList(page, totalPages).map((p, i) =>
+        typeof p === "string" ? (
+          <span key={`e${i}`} className="px-1 text-white/35">…</span>
+        ) : (
+          <button key={p} onClick={() => onGo(p)} aria-label={`Page ${p}`} aria-current={p === page ? "page" : undefined}
+            className={`${base} ${
+              p === page
+                ? "border-transparent bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white shadow-lg shadow-indigo-500/25"
+                : "border-white/10 bg-white/[0.04] text-white/60 hover:border-white/25 hover:text-white"
+            }`}>
+            {isGuest && p > freePages ? (
+              <span className="inline-flex items-center gap-1.5">{p}<LockIcon className="h-3.5 w-3.5 opacity-70" /></span>
+            ) : (
+              p
+            )}
+          </button>
+        )
+      )}
+      <button onClick={() => onGo(page + 1)} disabled={page >= totalPages} aria-label="Next page"
+        className={`${base} border-white/10 bg-white/[0.04] text-white/60 hover:border-white/25 hover:text-white disabled:pointer-events-none disabled:opacity-35`}>
+        →
+      </button>
+    </nav>
+  );
+}
+
+// Locked page (guest paywall)
+function LockedPage({ teasers, lockedCount }: { teasers: any[]; lockedCount: number }) {
+  const cards = teasers.length ? teasers : Array.from({ length: 8 }, () => ({}));
+  return (
+    <div className="relative">
+      <div className={`${GRID} pointer-events-none select-none`} aria-hidden>
+        {cards.map((t, i) => <TeaserCard key={i} t={t} />)}
+      </div>
+      <div className="absolute inset-0 z-10 flex justify-center bg-gradient-to-b from-ink/30 via-ink/70 to-ink/95">
+        <div className="glass mx-4 mt-14 h-fit w-full max-w-md rounded-3xl p-8 text-center shadow-2xl shadow-indigo-500/10 animate-fade-up sm:mt-24">
+          <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 shadow-lg shadow-indigo-500/30">
+            <LockIcon className="h-7 w-7 text-white" />
+          </div>
+          {lockedCount > 0 && (
+            <span className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-3 py-1 text-xs font-semibold text-indigo-200">
+              ✨ {lockedCount}+ more products available after free sign-up
+            </span>
+          )}
+          <h3 className="mt-3 text-2xl font-bold text-white">Unlock More Products</h3>
+          <p className="mt-2 text-sm leading-relaxed text-white/60">
+            Create your free account to access the rest of the Discover library, advanced features, and future updates.
+          </p>
+          <Link href="/signup"
+            className="mt-6 block w-full rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/45">
+            Sign Up Free →
+          </Link>
+          <p className="mt-3 text-sm text-white/50">
+            Already have an account?{" "}
+            <Link href="/login" className="font-medium text-indigo-300 underline-offset-4 transition hover:text-indigo-200 hover:underline">
+              Log in
+            </Link>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TeaserCard({ t }: { t: any }) {
+  return (
+    <article className="glass relative flex flex-col overflow-hidden rounded-2xl">
+      <div className="relative aspect-[4/5] w-full overflow-hidden bg-gradient-to-br from-indigo-500/15 to-fuchsia-500/10">
+        <div className="pointer-events-none absolute inset-0 grid place-items-center text-4xl opacity-20">🛍️</div>
+        {t.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={proxied(t.imageUrl)} alt="" loading="lazy"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+            className="relative h-full w-full scale-110 object-cover blur-lg" />
+        ) : null}
+        <div className="absolute inset-0 bg-black/30" />
+        <span className="absolute right-2.5 top-2.5 grid h-7 w-7 place-items-center rounded-full bg-black/50 backdrop-blur">
+          <LockIcon className="h-3.5 w-3.5 text-white/80" />
+        </span>
+      </div>
+      <div className="space-y-3 p-4">
+        <div className="flex gap-1.5">
+          <div className="h-5 w-16 rounded-full bg-white/[0.06]" />
+          <div className="h-5 w-20 rounded-full bg-white/[0.06]" />
+        </div>
+        <div className="flex gap-3">
+          <div className="h-7 w-20 rounded bg-white/[0.06]" />
+          <div className="h-7 w-14 rounded bg-white/[0.06]" />
+        </div>
+        <div className="h-9 w-full rounded-lg bg-white/[0.06]" />
+      </div>
+    </article>
+  );
+}
+
 // ─────────────────────────── Product card (compact grid) ───────────────────────────
-function ProductCard({ x, from, saved, onOpen, onSave }: { x: any; from: string; saved: boolean; onOpen: () => void; onSave: () => void }) {
+function ProductCard({ x, from, isGuest, saved, onOpen, onSave }: { x: any; from: string; isGuest: boolean; saved: boolean; onOpen: () => void; onSave: () => void }) {
   const trend = trendLabel(x);
   const mo = momentumLabel(x);
   return (
@@ -308,7 +453,7 @@ function ProductCard({ x, from, saved, onOpen, onSave }: { x: any; from: string;
           </div>
         </div>
         <div className="mt-4 flex items-center gap-2">
-          <Link href={createAdHref(x, from)} className="flex-1 rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-2.5 text-center text-xs font-semibold shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40">Create ad →</Link>
+          <Link href={createAdHref(x, from, isGuest)} className="flex-1 rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-2.5 text-center text-xs font-semibold shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40">Create ad →</Link>
           <button onClick={onSave} aria-label={saved ? "Remove from watchlist" : "Save to watchlist"}
             className={`rounded-lg border px-3 py-2.5 text-sm transition ${saved ? "border-amber-400/50 bg-amber-500/15 text-amber-200" : "border-white/12 text-white/50 hover:text-white"}`}>
             {saved ? "★" : "☆"}
@@ -333,8 +478,8 @@ function SkeletonCard() {
 }
 
 // ─────────────────────────── Rich Product Detail drawer ───────────────────────────
-function DetailDrawer({ x, detail, loading, from, saved, onSave, onClose }: {
-  x: any; detail: any; loading: boolean; from: string; saved: boolean; onSave: () => void; onClose: () => void;
+function DetailDrawer({ x, detail, loading, from, isGuest, saved, onSave, onClose }: {
+  x: any; detail: any; loading: boolean; from: string; isGuest: boolean; saved: boolean; onSave: () => void; onClose: () => void;
 }) {
   const trend = trendLabel(x);
   const mo = momentumLabel(x);
@@ -392,7 +537,7 @@ function DetailDrawer({ x, detail, loading, from, saved, onSave, onClose }: {
         <div className="flex flex-col gap-6 p-6">
           {/* Primary actions up top */}
           <div className="flex gap-2">
-            <Link href={createAdHref(x, from)} className="flex-1 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center text-sm font-semibold shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40">Create ad with TrimIQ →</Link>
+            <Link href={createAdHref(x, from, isGuest)} className="flex-1 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3 text-center text-sm font-semibold shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40">Create ad with TrimIQ →</Link>
             <button onClick={onSave} aria-label="Save" className={`rounded-xl border px-4 text-sm font-medium transition ${saved ? "border-amber-400/50 bg-amber-500/15 text-amber-200" : "border-white/12 text-white/75 hover:bg-white/[0.06] hover:text-white"}`}>{saved ? "★" : "☆"}</button>
           </div>
 
