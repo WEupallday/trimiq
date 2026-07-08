@@ -9,11 +9,11 @@ export const dynamic = "force-dynamic";
 
 const WINDOWS = new Set([7, 30, 90]);
 
-// Grid limits. Guests can browse the first FREE_LIMIT products (2 pages x 12);
+// Grid limits. Guests can browse the first FREE_LIMIT products (1 page of 12);
 // everything past that is returned only as image-teasers so the UI can show
 // blurred previews behind the sign-up overlay without leaking real data.
 const MAX = 200;
-const FREE_LIMIT = 24;
+const FREE_LIMIT = 12;
 
 // GET /api/discover                 -> product grid (filters/sort/window)
 // GET /api/discover?id=<productId>  -> single product + snapshot series (for detail)
