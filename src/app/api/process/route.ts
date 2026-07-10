@@ -469,6 +469,7 @@ export async function POST(req: NextRequest) {
           model: result.model,
           engineVersion: result.engineVersion,
           captions: result.captions,
+      zooms: result.zooms,
         };
         await track("edit_completed", {
           email: session.email,
@@ -478,7 +479,7 @@ export async function POST(req: NextRequest) {
             cuts: result.cuts, percentRemoved: result.percentRemoved, fillerRemoved: result.fillerRemoved,
             totalMs: Date.now() - startedAt,
             analyzeMs: result.stageMs["Analyzing"] || 0, renderMs: result.stageMs["Rendering"] || 0,
-            reedit: !!reusedInput, instructions: !!instructionsText, captions: !!result.captions,
+            reedit: !!reusedInput, instructions: !!instructionsText, captions: !!result.captions, zooms: !!result.zooms,
           },
         });
         await prisma.user
