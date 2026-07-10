@@ -21,6 +21,7 @@ export type JobStats = {
   engine?: string;
   model?: string;
   engineVersion?: string;
+  captions?: { color: string; size: string; position: string; count: number; coverage: number } | null;
 };
 
 export type Job = {
