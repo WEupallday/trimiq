@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { cleanVideo, type EditMode } from "@/lib/clean";
+import { parseInstructions } from "@/lib/instructions";
+import { track } from "@/lib/analytics";
 import { createJob, getJob, listJobs, removeJob, runExclusive } from "@/lib/jobs";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
@@ -299,7 +301,9 @@ async function handleWebhook(req: NextRequest) {
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const MODES: EditMode[] = ["light", "balanced", "aggressive"];
+const MODES: EditMode[] = ["beginner", "balanced", "aggressive"];
+// Accept the old mode id from cached clients.
+const LEGACY_MODES: Record<string, EditMode> = { light: "beginner" };
 const MAX_BYTES = 600 * 1024 * 1024; // hard server ceiling; client warns earlier
 
 // Turn raw ffmpeg/ffprobe failures into clear, user-friendly messages.
@@ -335,6 +339,7 @@ async function handleFeedback(req: NextRequest) {
         comment: typeof comment === "string" ? comment.slice(0, 2000) : null,
       },
     });
+    await track("feedback", { email: session?.email ?? null, props: { rating: r } });
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("FEEDBACK ERROR:", e);
@@ -357,7 +362,7 @@ export async function POST(req: NextRequest) {
 
   let inPath = "";
   try {
-    if (!req.body) {
+    if (!req.body && !req.nextUrl.searchParams.get("reedit")) {
       return NextResponse.json({ error: "No video received. Please choose a file and try again." }, { status: 400 });
     }
     const session = await getSession();
@@ -376,16 +381,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const modeRaw = (req.nextUrl.searchParams.get("mode") || "balanced") as EditMode;
-    const mode: EditMode = MODES.includes(modeRaw) ? modeRaw : "balanced";
+    const modeParam = req.nextUrl.searchParams.get("mode") || "balanced";
+    const mode: EditMode = MODES.includes(modeParam as EditMode)
+      ? (modeParam as EditMode)
+      : LEGACY_MODES[modeParam] || "balanced";
     const originalName = (req.nextUrl.searchParams.get("name") || "video.mp4").slice(0, 200);
+    const instructionsText = (req.nextUrl.searchParams.get("instructions") || "").slice(0, 500);
+    const parsed = parseInstructions(instructionsText);
+
+    // Re-edit: reuse a previous upload instead of receiving a new file.
+    const reeditId = req.nextUrl.searchParams.get("reedit");
+    let reusedInput: string | null = null;
+    if (reeditId) {
+      const prev = getJob(reeditId);
+      if (!prev || prev.email !== session.email) {
+        return NextResponse.json({ error: "That project is no longer available." }, { status: 404 });
+      }
+      if (!prev.inputPath) {
+        return NextResponse.json({ error: "The original file has been cleaned up — please upload it again.", reupload: true }, { status: 410 });
+      }
+      reusedInput = prev.inputPath;
+    }
 
     const dir = await mkdtemp(join(tmpdir(), "trimiq-"));
     const id = randomUUID();
-    inPath = join(dir, `${id}-in.mp4`);
+    inPath = reusedInput || join(dir, `${id}-in.mp4`);
     const outPath = join(dir, `${id}-out.mp4`);
 
-    await pipeline(Readable.fromWeb(req.body as any), createWriteStream(inPath));
+    if (!reusedInput) await pipeline(Readable.fromWeb(req.body as any), createWriteStream(inPath));
 
     const { size } = await stat(inPath);
     if (size < 1024) {
@@ -400,13 +423,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const job = createJob(session.email, originalName);
+    const paid = (user?.plan ?? "free") !== "free";
+    const job = createJob(session.email, originalName, paid);
     job.inputPath = inPath;
+    job.ownsInput = !reusedInput;
     job.outputPath = outPath;
+    job.mode = mode;
+    job.instructions = instructionsText || undefined;
+    job.applied = parsed.applied.length ? parsed.applied : undefined;
     const startedAt = Date.now();
 
+    await track("upload_started", {
+      email: session.email,
+      props: { mode, bytes: size, reedit: !!reusedInput, instructions: !!instructionsText },
+    });
+
     runExclusive(() =>
-      cleanVideo(inPath, outPath, { mode, fileBytes: size, onStage: (s) => (job.stage = s) })
+      cleanVideo(inPath, outPath, { mode, fileBytes: size, overrides: parsed.overrides, onStage: (s) => (job.stage = s) })
     )
       .then(async (result) => {
         job.status = "done";
@@ -417,7 +450,26 @@ export async function POST(req: NextRequest) {
           cuts: result.cuts,
           percent: result.percentRemoved,
           capped: result.capped,
+          segments: result.segments,
+          words: result.words,
+          keptText: result.keptText,
+          fillerRemoved: result.fillerRemoved,
+          stageMs: result.stageMs,
+          engine: result.mode,
+          model: result.model,
+          engineVersion: result.engineVersion,
         };
+        await track("edit_completed", {
+          email: session.email,
+          props: {
+            mode, engine: result.mode, model: result.model, engineVersion: result.engineVersion,
+            originalSec: Math.round(result.original), cleanedSec: Math.round(result.cleaned),
+            cuts: result.cuts, percentRemoved: result.percentRemoved, fillerRemoved: result.fillerRemoved,
+            totalMs: Date.now() - startedAt,
+            analyzeMs: result.stageMs["Analyzing"] || 0, renderMs: result.stageMs["Rendering"] || 0,
+            reedit: !!reusedInput, instructions: !!instructionsText,
+          },
+        });
         await prisma.user
           .update({ where: { email: session.email }, data: { editsUsed: { increment: 1 } } })
           .catch((e) => console.error("CREDIT UPDATE ERROR:", e));
@@ -441,6 +493,10 @@ export async function POST(req: NextRequest) {
         console.error("PROCESS ERROR:", err);
         job.status = "error";
         job.error = friendlyError(err);
+        await track("edit_failed", {
+          email: session.email,
+          props: { mode, error: job.error, totalMs: Date.now() - startedAt },
+        });
         await prisma.processingJob
           .create({ data: { email: session.email, name: originalName, status: "error", durationMs: Date.now() - startedAt, error: job.error, creatorBeta: !!user?.isCreatorBeta } })
           .catch(() => {});
@@ -451,13 +507,14 @@ export async function POST(req: NextRequest) {
           error: job.error,
         });
       })
-      .finally(() => {
-        unlink(inPath).catch(() => {});
-      });
+      ;
+    // The original upload is intentionally KEPT on disk so the user can
+    // regenerate with different settings without re-uploading. jobs.ts prunes
+    // originals automatically (24h free / 72h paid).
 
-    return NextResponse.json({ jobId: job.id });
+    return NextResponse.json({ jobId: job.id, applied: parsed.applied, unrecognized: parsed.unrecognized });
   } catch (err) {
-    if (inPath) await unlink(inPath).catch(() => {});
+    if (inPath && !req.nextUrl.searchParams.get("reedit")) await unlink(inPath).catch(() => {});
     console.error("UPLOAD ERROR:", err);
     return NextResponse.json(
       { error: "Upload failed. Please check your connection and try again." },
@@ -500,12 +557,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Not allowed." }, { status: 403 });
   }
 
+  // Stream back the untouched original (before/after preview on the review page).
+  if (params.get("original") === "1") {
+    const data = job.inputPath ? await readFile(job.inputPath).catch(() => null) : null;
+    if (!data) return NextResponse.json({ error: "The original is no longer available." }, { status: 410 });
+    return new NextResponse(data, { status: 200, headers: { "Content-Type": "video/mp4" } });
+  }
+
   if (params.get("download") === "1") {
     if (job.status !== "done" || !job.outputPath) {
       return NextResponse.json({ error: "This edit isn't ready yet." }, { status: 409 });
     }
     const data = await readFile(job.outputPath).catch(() => null);
     if (!data) return NextResponse.json({ error: "This file is no longer available." }, { status: 410 });
+    await track("download", { email: job.email, props: { mode: job.mode || "" } });
     return new NextResponse(data, {
       status: 200,
       headers: {
@@ -519,6 +584,9 @@ export async function GET(req: NextRequest) {
     status: job.status,
     stage: job.stage,
     error: job.error ?? null,
+    applied: job.applied ?? null,
+    hasOriginal: !!job.inputPath,
+    mode: job.mode ?? null,
     stats: job.status === "done" ? job.stats : null,
   });
 }
