@@ -19,6 +19,7 @@ type Stats = {
   engine?: string;
   model?: string;
   engineVersion?: string;
+  captions?: { color: string; size: string; position: string; count: number; coverage: number } | null;
 };
 
 type Project = {
@@ -52,7 +53,7 @@ const MODES = [
   { id: "aggressive", label: "Aggressive", desc: "Max pace" },
 ] as const;
 
-const CHIPS = ["Don't cut the intro", "Keep my pauses", "Cut harder", "Target 30 seconds"];
+const CHIPS = ["Don't cut the intro", "Keep my pauses", "Cut harder", "Target 30 seconds", "Add captions", "Make the captions blue"];
 
 function fmtSecs(s: number): string {
   if (!isFinite(s) || s < 0) s = 0;
@@ -106,6 +107,8 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
   const [files, setFiles] = useState<File[]>([]);
   const [mode, setMode] = useState<string>("balanced");
   const [instructions, setInstructions] = useState("");
+  const [captionsOn, setCaptionsOn] = useState(false);
+  const [captionColor, setCaptionColor] = useState("white");
   const [busy, setBusy] = useState(false);
   const [queue, setQueue] = useState<QItem[]>([]);
   const [error, setError] = useState("");
@@ -221,7 +224,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
       }
       if (instructions.trim()) track("instructions_used");
       const res = await fetch(
-        `/api/process?mode=${encodeURIComponent(mode)}&name=${encodeURIComponent(item.file.name)}&instructions=${encodeURIComponent(instructions.trim().slice(0, 500))}`,
+        `/api/process?mode=${encodeURIComponent(mode)}&name=${encodeURIComponent(item.file.name)}&instructions=${encodeURIComponent(instructions.trim().slice(0, 500))}${captionsOn ? `&captions=1&capcolor=${captionColor}` : ""}`,
         { method: "POST", headers: { "Content-Type": item.file.type || "video/mp4" }, body: item.file }
       );
       await finishJob(item, res);
@@ -349,6 +352,19 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
               + {c}
             </button>
           ))}
+        </div>
+        {/* Explicit caption toggle (also reachable via instructions) */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" disabled={busy} onClick={() => setCaptionsOn((v) => !v)}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${captionsOn ? "border-indigo-400/50 bg-indigo-500/15 text-white" : "border-white/10 text-white/50 hover:text-white"} disabled:opacity-40`}>
+            {captionsOn ? "\u2713 " : ""}AI captions
+          </button>
+          {captionsOn && ["white", "yellow", "blue", "green", "pink"].map((c) => (
+            <button key={c} type="button" disabled={busy} onClick={() => setCaptionColor(c)} aria-label={`${c} captions`}
+              className={`h-6 w-6 rounded-full border-2 transition ${captionColor === c ? "border-indigo-400" : "border-white/15"}`}
+              style={{ background: c === "white" ? "#fff" : c === "yellow" ? "#FFD400" : c === "blue" ? "#3DA5FF" : c === "green" ? "#3DFF88" : "#FF6BD6" }} />
+          ))}
+          {captionsOn && <span className="text-[10px] text-white/35">bold TikTok-style, burned in</span>}
         </div>
       </div>
 
@@ -592,7 +608,7 @@ function ReviewPanel({ item, busy, onRegenerate }: {
         <Metric label="Fillers removed" value={String(s.fillerRemoved ?? 0)} sub="um, uh, like…" />
         <Metric label="Time saved" value={fmtSecs(s.removed)} accent />
         <Metric label="Editing style" value={styleLabel} />
-        <Metric label="Captions" value="Coming soon" dim />
+        <Metric label="Captions" value={s.captions ? `${s.captions.color} \u00b7 ${s.captions.size}` : "Off"} sub={s.captions ? `${s.captions.count} lines \u00b7 ${s.captions.position}` : "toggle captions or say: add captions"} dim={!s.captions} />
         <Metric label="Processing time" value={fmtSecs(processMs / 1000)} />
         <Metric label="Engine" value={s.engine === "smart" ? "AI transcript" : "Audio-based"} sub={s.model || undefined} />
       </div>
