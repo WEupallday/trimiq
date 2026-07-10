@@ -20,6 +20,7 @@ type Stats = {
   model?: string;
   engineVersion?: string;
   captions?: { color: string; size: string; position: string; count: number; coverage: number } | null;
+  zooms?: { count: number; intensity: string; frequency: string } | null;
 };
 
 type Project = {
@@ -53,7 +54,7 @@ const MODES = [
   { id: "aggressive", label: "Aggressive", desc: "Max pace" },
 ] as const;
 
-const CHIPS = ["Don't cut the intro", "Keep my pauses", "Cut harder", "Target 30 seconds", "Add captions", "Make the captions blue"];
+const CHIPS = ["Don't cut the intro", "Keep my pauses", "Cut harder", "Target 30 seconds", "Add captions", "Make the captions blue", "Add subtle zooms", "Zoom on the key moments", "Make it energetic", "TikTok Shop style"];
 
 function fmtSecs(s: number): string {
   if (!isFinite(s) || s < 0) s = 0;
@@ -609,6 +610,7 @@ function ReviewPanel({ item, busy, onRegenerate }: {
         <Metric label="Time saved" value={fmtSecs(s.removed)} accent />
         <Metric label="Editing style" value={styleLabel} />
         <Metric label="Captions" value={s.captions ? `${s.captions.color} \u00b7 ${s.captions.size}` : "Off"} sub={s.captions ? `${s.captions.count} lines \u00b7 ${s.captions.position}` : "toggle captions or say: add captions"} dim={!s.captions} />
+        <Metric label="Zoom effects" value={s.zooms ? `${s.zooms.count} ${s.zooms.count === 1 ? "zoom" : "zooms"} · ${s.zooms.intensity}` : "Off"} sub={s.zooms ? "AI-picked moments" : "say: add zooms / make it energetic"} dim={!s.zooms} />
         <Metric label="Processing time" value={fmtSecs(processMs / 1000)} />
         <Metric label="Engine" value={s.engine === "smart" ? "AI transcript" : "Audio-based"} sub={s.model || undefined} />
       </div>
