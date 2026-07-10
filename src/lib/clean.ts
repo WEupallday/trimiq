@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.2.1";
+export const ENGINE_VERSION = "7.3.0";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -55,7 +55,21 @@ export type CaptionOptions = {
   enabled: boolean;
   color?: string; // named color or #rrggbb
   size?: "small" | "medium" | "large";
-  position?: "top" | "center" | "bottom";
+  position?:
+    | "top" | "center" | "bottom"
+    | "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  style?: "outline" | "boxed" | "minimal";
+};
+
+// AI-controlled zoom effects. The ENGINE picks the moments (no manual
+// timestamps); options only steer intensity / frequency / targeting.
+// Extensible: add new effect kinds alongside `zoom` without touching callers.
+export type ZoomOptions = {
+  enabled: boolean;
+  intensity?: "subtle" | "medium" | "strong";
+  frequency?: "low" | "medium" | "high";
+  importantOnly?: boolean;
+  target?: "product" | "speaker";
 };
 
 export type EditOverrides = {
@@ -67,6 +81,9 @@ export type EditOverrides = {
   extraFillerWords?: string[];
   pace?: "slower" | "faster";
   captions?: CaptionOptions;
+  zoom?: ZoomOptions;
+  removeAllFillers?: boolean;
+  keepAllFillers?: boolean;
 };
 
 export const MODE_PRESETS: Record<EditMode, Settings> = {
@@ -106,7 +123,8 @@ export type CleanResult = {
   keptText: string;
   fillerRemoved: number;
   takesRemoved: number;
-  captions: { color: string; size: string; position: string; count: number; coverage: number } | null;
+  captions: { color: string; size: string; position: string; style: string; count: number; coverage: number } | null;
+  zooms: { count: number; intensity: string; frequency: string } | null;
   words: { t: string; s: number; e: number; x: boolean }[];
 };
 
@@ -458,6 +476,14 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): { seg
 const CAPTION_COLORS: Record<string, string> = {
   white: "FFFFFF", yellow: "FFD400", blue: "3DA5FF", green: "3DFF88",
   pink: "FF6BD6", red: "FF4D4D", purple: "B18CFF", orange: "FF9E3D", black: "101010",
+  teal: "2DD4BF", cyan: "22D3EE", aqua: "22D3EE", magenta: "FF4DFF", gold: "FFC93D",
+  lime: "B4FF39", mint: "6BFFC2", coral: "FF7A59", salmon: "FF8C7A", turquoise: "30E0D0",
+  violet: "8B5CF6", indigo: "6366F1", navy: "1E3A8A", maroon: "800000", olive: "808000",
+  brown: "8B5A2B", gray: "9CA3AF", grey: "9CA3AF", silver: "C0C0C0", crimson: "DC143C",
+  hotpink: "FF69B4", skyblue: "87CEEB", lavender: "C4B5FD", peach: "FFCBA4", cream: "FFF1D6",
+  beige: "F5F5DC", lightblue: "87CEEB", darkblue: "1E3A8A", lightgreen: "6BFFC2",
+  darkgreen: "14532D", lightpink: "FFB6C1", darkred: "800000", darkgray: "4B5563",
+  darkgrey: "4B5563", lightgray: "C0C0C0", lightgrey: "C0C0C0",
 };
 
 // ASS colors are &HAABBGGRR (blue-green-red).
@@ -514,20 +540,98 @@ function buildCaptionEvents(keptWords: Word[], segs: [number, number][]): { star
 }
 
 // TikTok-native look: bold, centered, heavy outline, sized for mobile.
-function buildAss(events: { start: number; end: number; text: string }[], w: number, h: number, o: { color: string; size: string; position: string }): string {
+function buildAss(events: { start: number; end: number; text: string }[], w: number, h: number, o: { color: string; size: string; position: string; style?: string }): string {
   const size = o.size === "large" ? Math.round(h * 0.048) : o.size === "small" ? Math.round(h * 0.03) : Math.round(h * 0.038);
-  const align = o.position === "top" ? 8 : o.position === "center" ? 5 : 2;
+  const ALIGN: Record<string, number> = {
+    "bottom-left": 1, bottom: 2, "bottom-right": 3, center: 5,
+    "top-left": 7, top: 8, "top-right": 9,
+  };
+  const align = ALIGN[o.position] ?? 2;
   const marginV = o.position === "center" ? 10 : Math.round(h * 0.16);
-  const outline = Math.max(2, Math.round(size / 11));
+  const marginH = /left|right/.test(o.position) ? Math.max(40, Math.round(w * 0.05)) : 60;
+  const minimal = o.style === "minimal";
+  const boxed = o.style === "boxed";
+  const outline = minimal ? 1 : Math.max(2, Math.round(size / 11));
+  const borderStyle = boxed ? 3 : 1;
+  const backColour = boxed ? "&H50000000" : "&H7F000000";
+  const bold = minimal ? 0 : -1;
+  const shadow = minimal ? 0 : 1;
   const esc = (t: string) => t.replace(/[{}\\]/g, "").replace(/\r?\n/g, " ");
   let out2 =
     "[Script Info]\nScriptType: v4.00+\n" +
     `PlayResX: ${w}\nPlayResY: ${h}\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n` +
     "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n" +
-    `Style: Cap,DejaVu Sans,${size},${assColor(o.color)},&H000000FF,&H00101010,&H7F000000,-1,0,0,0,100,100,0,0,1,${outline},1,${align},60,60,${marginV},1\n\n` +
+    `Style: Cap,DejaVu Sans,${size},${assColor(o.color)},&H000000FF,&H00101010,${backColour},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${align},${marginH},${marginH},${marginV},1\n\n` +
     "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n";
   for (const ev of events) out2 += `Dialogue: 0,${assTime(ev.start)},${assTime(ev.end)},Cap,,0,0,0,,${esc(ev.text)}\n`;
   return out2;
+}
+
+// ============================ AI zoom planning =============================
+// The engine picks zoom moments itself - no manual timestamps and zero extra
+// API cost. Signals (all already computed): cut boundaries (a resumed thought
+// = emphasis), sentence starts, exclamations / numbers in the transcript, and
+// demonstrative "look at this" phrasing when focusing on the product.
+const ZOOM_SCALE: Record<string, number> = { subtle: 1.06, medium: 1.13, strong: 1.22 };
+const ZOOM_GAP: Record<string, number> = { low: 14, medium: 8, high: 4 };
+
+function planZooms(
+  segs: [number, number][],
+  planInfo: { allWords: Word[]; mask: boolean[] } | null,
+  z: ZoomOptions,
+): { seg: number; scale: number }[] {
+  if (!z.enabled || !segs.length) return [];
+  const scale = ZOOM_SCALE[z.intensity || "medium"] || 1.13;
+  const gap = z.importantOnly
+    ? Math.max(10, ZOOM_GAP[z.frequency || "medium"] || 8)
+    : ZOOM_GAP[z.frequency || "medium"] || 8;
+  const kept = planInfo ? planInfo.allWords.filter((_, i) => !planInfo.mask[i]) : [];
+  const picks: { seg: number; scale: number }[] = [];
+  let lastZoomEnd = -1e9; // output-timeline time when the last zoom ended
+  let outT = 0;
+  for (let i = 0; i < segs.length; i++) {
+    const [a, b] = segs[i];
+    const segDur = b - a;
+    let score = 0;
+    if (i > 0 && a - segs[i - 1][1] > 1.2) score += 2; // big cut before -> emphasis
+    const wordsIn = kept.filter((w) => w.start >= a - 0.05 && w.start < b);
+    const first = wordsIn[0];
+    if (first && /^[A-Z]/.test(first.raw || "")) score += 1; // sentence start
+    const text = wordsIn.map((w) => w.raw || w.w).join(" ");
+    if (/[!?]/.test(text)) score += 1;
+    if (/\d/.test(text)) score += 1;
+    if (z.target === "product" && /\b(this|these|here|look|check|watch)\b/i.test(text)) score += 2;
+    if (segDur >= 1.2 && segDur <= 9) score += 1;
+    if (!kept.length) score = i % 2 === 0 ? 2 : 0; // no transcript: steady rhythm
+    const need = z.importantOnly ? 4 : 2;
+    if (score >= need && outT - lastZoomEnd >= gap && segDur >= 0.8) {
+      picks.push({ seg: i, scale });
+      lastZoomEnd = outT + segDur;
+    }
+    outT += segDur;
+  }
+  // Zooms were explicitly requested: guarantee at least one on the longest
+  // suitable segment rather than silently doing nothing.
+  if (!picks.length && !z.importantOnly) {
+    let best = -1;
+    let bestDur = 0;
+    segs.forEach(([a, b], i) => {
+      if (b - a > bestDur) { best = i; bestDur = b - a; }
+    });
+    if (best >= 0 && bestDur >= 1) picks.push({ seg: best, scale });
+  }
+  return picks;
+}
+
+// Smooth centered push-in for one segment. zoompan state resets per filter
+// instance, so each zoomed segment ramps from 1.0 independently.
+function zoomFilter(scale: number, segDur: number, fps: number, fpsStr: string, w: number, h: number): string {
+  const ramp = Math.max(0.4, Math.min(1.6, segDur * 0.6));
+  const inc = (scale - 1) / Math.max(1, ramp * fps);
+  return (
+    "zoompan=z='min(1+" + inc.toFixed(6) + "*on," + scale.toFixed(3) + ")'" +
+    ":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=" + w + "x" + h + ":fps=" + fpsStr
+  );
 }
 
 // ============================== rendering ==================================
@@ -542,15 +646,17 @@ function buildAss(events: { start: number; end: number; text: string }[], w: num
 //   • EXACT OUTPUT — no scale/crop/reframe; source resolution, aspect ratio, pixel
 //     format and frame rate preserved; crf 18 is visually lossless.
 async function renderFinal(
-  input: string, output: string, segs: [number, number][], _s: Settings, original: number, assPath: string | null
+  input: string, output: string, segs: [number, number][], _s: Settings, original: number, assPath: string | null,
+  zooms?: { seg: number; scale: number }[] | null,
 ): Promise<boolean> {
   // No cuts at all -> remux unchanged (bit-exact, fast) unless captions must be burned in.
   const noCuts = segs.length === 1 && segs[0][0] <= 0.05 && segs[0][1] >= original - 0.05;
-  if (noCuts && !assPath) {
+  const hasZooms = !!(zooms && zooms.length);
+  if (noCuts && !assPath && !hasZooms) {
     await run(FFMPEG, ["-y", "-i", input, "-c", "copy", "-movflags", "+faststart", output]);
     return false;
   }
-  if (noCuts && assPath) {
+  if (noCuts && assPath && !hasZooms) {
     const { w: w0, h: h0 } = await getDims(input);
     const preset0 = Math.max(w0, h0) > 1920 ? "superfast" : "veryfast";
     await run(FFMPEG, [
@@ -579,7 +685,9 @@ async function renderFinal(
   // concat filter joins them keeping A and V locked on one timeline.
   let f = "";
   S.forEach(([a, b], i) => {
-    f += `[0:v]trim=${a.toFixed(4)}:${b.toFixed(4)},setpts=PTS-STARTPTS[v${i}];`;
+    const zm = hasZooms ? zooms!.find((z) => z.seg === i) : undefined;
+    const zf = zm ? "," + zoomFilter(zm.scale, b - a, fps, fpsStr, w, h) : "";
+    f += `[0:v]trim=${a.toFixed(4)}:${b.toFixed(4)},setpts=PTS-STARTPTS${zf}[v${i}];`;
     f += `[0:a]atrim=${a.toFixed(4)}:${b.toFixed(4)},asetpts=PTS-STARTPTS[a${i}];`;
   });
   S.forEach((_, i) => (f += `[v${i}][a${i}]`));
@@ -631,6 +739,8 @@ export async function cleanVideo(
   if (ov.extraFillerWords && ov.extraFillerWords.length) settings.extraFillerWords = ov.extraFillerWords;
   if (ov.protectStartSeconds) settings.protectStartSeconds = ov.protectStartSeconds;
   if (ov.targetDurationSec) settings.targetDurationSec = ov.targetDurationSec;
+  if (ov.removeAllFillers) { settings.removeFiller = true; settings.removeSoftFiller = true; }
+  if (ov.keepAllFillers) { settings.removeFiller = false; settings.removeSoftFiller = false; }
 
   const model = opts.model || process.env.DEEPGRAM_MODEL || "nova-2";
 
@@ -708,7 +818,7 @@ export async function cleanVideo(
 
   // Burned-in captions (optional; requires the transcript path).
   let assPath: string | null = null;
-  let captionInfo: { color: string; size: string; position: string; count: number; coverage: number } | null = null;
+  let captionInfo: { color: string; size: string; position: string; style: string; count: number; coverage: number } | null = null;
   if (ov.captions && ov.captions.enabled && planInfo) {
     try {
       const keptWords = planInfo.allWords.filter((_, i) => !planInfo!.mask[i]);
@@ -719,6 +829,7 @@ export async function cleanVideo(
           color: (ov.captions.color || "white").toLowerCase(),
           size: ov.captions.size || "medium",
           position: ov.captions.position || "bottom",
+          style: ov.captions.style || "outline",
         };
         assPath = join(dirname(input), `cap-${Date.now()}.ass`);
         await writeFile(assPath, buildAss(events, w, h, style), "utf8");
@@ -733,18 +844,33 @@ export async function cleanVideo(
     }
   }
 
+  // AI zooms (optional; the engine picks the moments).
+  let zoomPlan: { seg: number; scale: number }[] = [];
+  let zoomInfo: { count: number; intensity: string; frequency: string } | null = null;
+  if (ov.zoom && ov.zoom.enabled) {
+    zoomPlan = planZooms(segs, planInfo, ov.zoom);
+    if (zoomPlan.length)
+      zoomInfo = {
+        count: zoomPlan.length,
+        intensity: ov.zoom.intensity || "medium",
+        frequency: ov.zoom.frequency || "medium",
+      };
+  }
+
   stage("Rendering");
   let capped = false;
   try {
-    capped = await renderFinal(input, output, segs, settings, original, assPath);
+    capped = await renderFinal(input, output, segs, settings, original, assPath, zoomPlan);
   } catch (e) {
-    if (assPath) {
+    if (assPath || zoomPlan.length) {
       // Graceful degradation: captioned render failed (e.g. missing fonts) ->
       // deliver the edit without captions rather than failing the job.
-      console.error("[ENGINE] captioned render failed, retrying without captions:", (e as any)?.message || e);
+      console.error("[ENGINE] effect render failed, retrying without captions/zooms:", (e as any)?.message || e);
       assPath = null;
       captionInfo = null;
-      capped = await renderFinal(input, output, segs, settings, original, null);
+      zoomPlan = [];
+      zoomInfo = null;
+      capped = await renderFinal(input, output, segs, settings, original, null, []);
     } else {
       throw e;
     }
@@ -781,6 +907,7 @@ export async function cleanVideo(
     fillerRemoved: words.filter((w) => w.x).length,
     takesRemoved: planInfo ? planInfo.takesRemoved : 0,
     captions: captionInfo,
+    zooms: zoomInfo,
     words,
   };
 }
