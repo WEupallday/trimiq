@@ -1,15 +1,15 @@
 // ===========================================================================
-// TrimIQ Editing Engine â V7 (quality-first, resolution-exact, memory-safe)
-//   â¢ Transcription-driven cuts: removes dead space, long pauses, fillers,
+// TrimIQ Editing Engine — V7 (quality-first, resolution-exact, memory-safe)
+//   • Transcription-driven cuts: removes dead space, long pauses, fillers,
 //     false starts, correction phrases, and repeated/retake lines.
-//   â¢ Retake clustering: when you say something several times, only the final
+//   • Retake clustering: when you say something several times, only the final
 //     complete take is kept.
-//   â¢ Editing modes: light / balanced / aggressive (snappy short-form pacing).
-//   â¢ EXACT output: no crop, no zoom, no reframe, NO downscale. The export keeps
+//   • Editing modes: light / balanced / aggressive (snappy short-form pacing).
+//   • EXACT output: no crop, no zoom, no reframe, NO downscale. The export keeps
 //     the uploaded resolution, aspect ratio, framing and fps exactly.
-//   â¢ Memory-safe rendering: each kept segment is encoded on its own, then the
+//   • Memory-safe rendering: each kept segment is encoded on its own, then the
 //     pieces are concatenated with a stream copy. Peak memory scales with one
-//     frame's resolution â not the video length or number of cuts â so large/4K
+//     frame's resolution — not the video length or number of cuts — so large/4K
 //     clips process consistently without running the box out of memory.
 // ===========================================================================
 import { spawn } from "node:child_process";
@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
 import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
-// Bump on every engine behavior change â benchmark history is keyed by this.
+// Bump on every engine behavior change — benchmark history is keyed by this.
 export const ENGINE_VERSION = "7.2.1";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
@@ -48,7 +48,7 @@ export type Settings = {
   targetDurationSec?: number;
 };
 
-// Normalized instruction overrides â applied on top of a mode preset. This is
+// Normalized instruction overrides — applied on top of a mode preset. This is
 // the stable contract between instruction parsers (rule-based v1 today, LLM v2
 // later) and the engine.
 export type CaptionOptions = {
@@ -265,7 +265,7 @@ function splitLines(words: Word[], sentenceGap: number): Line[] {
   return lines;
 }
 
-// Collapse a leading restart, e.g. "I'm gonnaâ I'm gonna show you" -> keep the
+// Collapse a leading restart, e.g. "I'm gonna— I'm gonna show you" -> keep the
 // last attempt within the line.
 function collapseRestart(line: Line): Line {
   const n = line.norm;
@@ -435,7 +435,7 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): { seg
 
   // Build kept time segments. Cut (excise) between two kept words when there is a
   // real pause longer than naturalPause, OR a filler/dropped word sat between them
-  // â so fillers are physically removed, not just dropped from the text.
+  // — so fillers are physically removed, not just dropped from the text.
   const segs: [number, number][] = [];
   let segStart = Math.max(0, keep[0].start - Math.min(s.wordPad, 0.1));
   for (let k = 0; k < keep.length; k++) {
@@ -533,13 +533,13 @@ function buildAss(events: { start: number; end: number; text: string }[], w: num
 // ============================== rendering ==================================
 // trim + concat render. Validated empirically (synchronized flash+beep markers,
 // 30 cuts over 60s) to deliver:
-//   â¢ FRAME-ACCURATE A/V SYNC â ~1 ms, with NO drift across the whole clip. Audio
+//   • FRAME-ACCURATE A/V SYNC — ~1 ms, with NO drift across the whole clip. Audio
 //     and video are concatenated on ONE shared timeline (the `concat` filter), and
 //     every cut is snapped to the exact video frame grid, so the streams cut at the
 //     same instant and can never drift apart. (The previous `select`/`aselect`
 //     approach renumbered the streams independently and drifted up to ~64 ms+.)
-//   â¢ MEMORY-SAFE â ~1 GB peak even at true 4K, regardless of how many cuts.
-//   â¢ EXACT OUTPUT â no scale/crop/reframe; source resolution, aspect ratio, pixel
+//   • MEMORY-SAFE — ~1 GB peak even at true 4K, regardless of how many cuts.
+//   • EXACT OUTPUT — no scale/crop/reframe; source resolution, aspect ratio, pixel
 //     format and frame rate preserved; crf 18 is visually lossless.
 async function renderFinal(
   input: string, output: string, segs: [number, number][], _s: Settings, original: number, assPath: string | null
@@ -686,7 +686,7 @@ export async function cleanVideo(
       console.error("[ENGINE] transcription failed, using audio-only fallback:", (e as any)?.message || e);
     }
   } else {
-    console.warn("[ENGINE] DEEPGRAM_API_KEY not set â running audio-only (silence) edits only.");
+    console.warn("[ENGINE] DEEPGRAM_API_KEY not set — running audio-only (silence) edits only.");
   }
 
   stage("Detecting pauses");
