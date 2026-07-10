@@ -13,6 +13,14 @@ export type JobStats = {
   cuts: number;
   percent: number;
   capped: boolean;
+  segments?: [number, number][];
+  words?: { t: string; s: number; e: number; x: boolean }[];
+  keptText?: string;
+  fillerRemoved?: number;
+  stageMs?: Record<string, number>;
+  engine?: string;
+  model?: string;
+  engineVersion?: string;
 };
 
 export type Job = {
@@ -24,6 +32,11 @@ export type Job = {
   error?: string;
   inputPath?: string;
   outputPath?: string;
+  ownsInput?: boolean;
+  paid?: boolean;
+  mode?: string;
+  instructions?: string;
+  applied?: string[];
   stats?: JobStats;
   createdAt: number;
 };
@@ -33,11 +46,14 @@ const g = globalThis as unknown as { __trimiqJobs?: Map<string, Job> };
 if (!g.__trimiqJobs) g.__trimiqJobs = new Map<string, Job>();
 export const jobs: Map<string, Job> = g.__trimiqJobs;
 
-// Keep recent projects available for the whole server session (best-effort).
-const MAX_AGE = 12 * 60 * 60 * 1000; // 12 hours
+// Retention: originals are kept on disk so users can regenerate with different
+// settings without re-uploading, then cleaned up automatically — 24h for free
+// users, 72h for paid plans. (Disk is ephemeral across deploys either way.)
+const TTL_FREE = 24 * 60 * 60 * 1000;
+const TTL_PAID = 72 * 60 * 60 * 1000;
 const MAX_JOBS = 200; // safety cap on memory/disk
 
-export function createJob(email: string, originalName: string): Job {
+export function createJob(email: string, originalName: string, paid = false): Job {
   pruneOld();
   const job: Job = {
     id: randomUUID(),
@@ -45,6 +61,7 @@ export function createJob(email: string, originalName: string): Job {
     originalName,
     status: "processing",
     stage: "Queued",
+    paid,
     createdAt: Date.now(),
   };
   jobs.set(job.id, job);
@@ -54,7 +71,7 @@ export function createJob(email: string, originalName: string): Job {
 function pruneOld() {
   const now = Date.now();
   jobs.forEach((j, id) => {
-    if (now - j.createdAt > MAX_AGE) removeJob(id);
+    if (now - j.createdAt > (j.paid ? TTL_PAID : TTL_FREE)) removeJob(id);
   });
   // If we still have too many, drop the oldest.
   if (jobs.size > MAX_JOBS) {
@@ -76,7 +93,11 @@ export function listJobs(email: string): Job[] {
 export function removeJob(id: string) {
   const job = jobs.get(id);
   if (job?.outputPath) unlink(job.outputPath).catch(() => {});
-  if (job?.inputPath) unlink(job.inputPath).catch(() => {});
+  // Only delete the original if no other job (e.g. a re-edit) still uses it.
+  if (job?.inputPath) {
+    const shared = Array.from(jobs.values()).some((o) => o.id !== id && o.inputPath === job.inputPath);
+    if (!shared) unlink(job.inputPath).catch(() => {});
+  }
   jobs.delete(id);
 }
 
