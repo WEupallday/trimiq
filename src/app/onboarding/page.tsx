@@ -12,7 +12,7 @@ export default async function OnboardingPage() {
 
   // If they've already added a TikTok handle, no need to prompt again.
   const user = await prisma.user.findUnique({ where: { email: session.email } });
-  if (user?.tiktokUsername) redirect("/discover");
+  if (user?.tiktokUsername) redirect("/dashboard");
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden px-6">
