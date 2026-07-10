@@ -1,15 +1,15 @@
 // ===========================================================================
-// TrimIQ Editing Engine — V7 (quality-first, resolution-exact, memory-safe)
-//   • Transcription-driven cuts: removes dead space, long pauses, fillers,
+// TrimIQ Editing Engine â V7 (quality-first, resolution-exact, memory-safe)
+//   â¢ Transcription-driven cuts: removes dead space, long pauses, fillers,
 //     false starts, correction phrases, and repeated/retake lines.
-//   • Retake clustering: when you say something several times, only the final
+//   â¢ Retake clustering: when you say something several times, only the final
 //     complete take is kept.
-//   • Editing modes: light / balanced / aggressive (snappy short-form pacing).
-//   • EXACT output: no crop, no zoom, no reframe, NO downscale. The export keeps
+//   â¢ Editing modes: light / balanced / aggressive (snappy short-form pacing).
+//   â¢ EXACT output: no crop, no zoom, no reframe, NO downscale. The export keeps
 //     the uploaded resolution, aspect ratio, framing and fps exactly.
-//   • Memory-safe rendering: each kept segment is encoded on its own, then the
+//   â¢ Memory-safe rendering: each kept segment is encoded on its own, then the
 //     pieces are concatenated with a stream copy. Peak memory scales with one
-//     frame's resolution — not the video length or number of cuts — so large/4K
+//     frame's resolution â not the video length or number of cuts â so large/4K
 //     clips process consistently without running the box out of memory.
 // ===========================================================================
 import { spawn } from "node:child_process";
@@ -18,8 +18,8 @@ import { dirname, join } from "node:path";
 import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
-// Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.2.0";
+// Bump on every engine behavior change â benchmark history is keyed by this.
+export const ENGINE_VERSION = "7.2.1";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -48,7 +48,7 @@ export type Settings = {
   targetDurationSec?: number;
 };
 
-// Normalized instruction overrides — applied on top of a mode preset. This is
+// Normalized instruction overrides â applied on top of a mode preset. This is
 // the stable contract between instruction parsers (rule-based v1 today, LLM v2
 // later) and the engine.
 export type CaptionOptions = {
@@ -128,7 +128,25 @@ function run(cmd: string, args: string[]): Promise<{ stdout: string; stderr: str
 
 async function getDuration(file: string): Promise<number> {
   const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
-  return parseFloat(stdout.trim());
+  const d = parseFloat(stdout.trim());
+  if (Number.isFinite(d) && d > 0) return d;
+  // Streaming containers (e.g. MediaRecorder webm uploads) often lack a duration
+  // header. Fall back to scanning packet timestamps (demux only, no decode).
+  try {
+    const { stdout: pk } = await run(FFPROBE, [
+      "-v", "error", "-show_entries", "packet=pts_time,duration_time", "-of", "csv=p=0", file,
+    ]);
+    let max = 0;
+    for (const line of pk.split("\n")) {
+      const parts = line.split(",");
+      const pts = parseFloat(parts[0]);
+      const pdur = parseFloat(parts[1]);
+      const end = (Number.isFinite(pts) ? pts : 0) + (Number.isFinite(pdur) ? pdur : 0);
+      if (end > max) max = end;
+    }
+    if (max > 0) return max;
+  } catch {}
+  return 0;
 }
 
 async function getDims(file: string): Promise<{ w: number; h: number }> {
@@ -247,7 +265,7 @@ function splitLines(words: Word[], sentenceGap: number): Line[] {
   return lines;
 }
 
-// Collapse a leading restart, e.g. "I'm gonna— I'm gonna show you" -> keep the
+// Collapse a leading restart, e.g. "I'm gonnaâ I'm gonna show you" -> keep the
 // last attempt within the line.
 function collapseRestart(line: Line): Line {
   const n = line.norm;
@@ -417,7 +435,7 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): { seg
 
   // Build kept time segments. Cut (excise) between two kept words when there is a
   // real pause longer than naturalPause, OR a filler/dropped word sat between them
-  // — so fillers are physically removed, not just dropped from the text.
+  // â so fillers are physically removed, not just dropped from the text.
   const segs: [number, number][] = [];
   let segStart = Math.max(0, keep[0].start - Math.min(s.wordPad, 0.1));
   for (let k = 0; k < keep.length; k++) {
@@ -515,13 +533,13 @@ function buildAss(events: { start: number; end: number; text: string }[], w: num
 // ============================== rendering ==================================
 // trim + concat render. Validated empirically (synchronized flash+beep markers,
 // 30 cuts over 60s) to deliver:
-//   • FRAME-ACCURATE A/V SYNC — ~1 ms, with NO drift across the whole clip. Audio
+//   â¢ FRAME-ACCURATE A/V SYNC â ~1 ms, with NO drift across the whole clip. Audio
 //     and video are concatenated on ONE shared timeline (the `concat` filter), and
 //     every cut is snapped to the exact video frame grid, so the streams cut at the
 //     same instant and can never drift apart. (The previous `select`/`aselect`
 //     approach renumbered the streams independently and drifted up to ~64 ms+.)
-//   • MEMORY-SAFE — ~1 GB peak even at true 4K, regardless of how many cuts.
-//   • EXACT OUTPUT — no scale/crop/reframe; source resolution, aspect ratio, pixel
+//   â¢ MEMORY-SAFE â ~1 GB peak even at true 4K, regardless of how many cuts.
+//   â¢ EXACT OUTPUT â no scale/crop/reframe; source resolution, aspect ratio, pixel
 //     format and frame rate preserved; crf 18 is visually lossless.
 async function renderFinal(
   input: string, output: string, segs: [number, number][], _s: Settings, original: number, assPath: string | null
@@ -628,7 +646,7 @@ export async function cleanVideo(
   };
 
   stage("Analyzing");
-  const original = await getDuration(input);
+  let original = await getDuration(input);
 
   let segs: [number, number][] = [];
   let mode: "smart" | "audio" = "audio";
@@ -642,6 +660,7 @@ export async function cleanVideo(
       audioFiles.push(audio);
       const words = await transcribe(audio, key, model);
       if (words.length >= 3) {
+          if (!Number.isFinite(original) || original <= 0) original = words[words.length - 1].end + 0.8;
         let plan = planFromTranscript(words, original, settings);
         // Target duration: escalate pacing until the kept time fits.
         if (settings.targetDurationSec) {
@@ -667,7 +686,7 @@ export async function cleanVideo(
       console.error("[ENGINE] transcription failed, using audio-only fallback:", (e as any)?.message || e);
     }
   } else {
-    console.warn("[ENGINE] DEEPGRAM_API_KEY not set — running audio-only (silence) edits only.");
+    console.warn("[ENGINE] DEEPGRAM_API_KEY not set â running audio-only (silence) edits only.");
   }
 
   stage("Detecting pauses");
