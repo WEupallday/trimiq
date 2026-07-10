@@ -17,6 +17,7 @@ export default function BenchRunner() {
   const [label, setLabel] = useState("baseline");
   const [modes, setModes] = useState<string[]>(["balanced"]);
   const [models, setModels] = useState<string[]>(["nova-2"]);
+  const [withCaptions, setWithCaptions] = useState(true);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [results, setResults] = useState<ClipResult[]>([]);
@@ -46,7 +47,7 @@ export default function BenchRunner() {
       setLog((l) => [...l, `Running ${f.name} (${modes.length * models.length} combos)…`]);
       try {
         const res = await fetch(
-          `/api/bench?name=${encodeURIComponent(f.name)}&label=${encodeURIComponent(label)}&modes=${modes.join(",")}&models=${models.join(",")}`,
+          `/api/bench?name=${encodeURIComponent(f.name)}&label=${encodeURIComponent(label)}&modes=${modes.join(",")}&models=${models.join(",")}${withCaptions ? "&captions=1" : ""}`,
           { method: "POST", headers: { "Content-Type": f.type || "video/mp4" }, body: f }
         );
         const d = await res.json();
@@ -96,6 +97,10 @@ export default function BenchRunner() {
               </button>
             ))}
           </div>
+          <button onClick={() => setWithCaptions((v) => !v)} disabled={running}
+            className={`rounded-lg border px-2.5 py-1 text-xs transition ${withCaptions ? "border-emerald-400/50 bg-emerald-500/15 text-white" : "border-white/10 text-white/50 hover:text-white"}`}>
+            {withCaptions ? "\u2713 " : ""}captions
+          </button>
           <input value={label} onChange={(e) => setLabel(e.target.value)} disabled={running} maxLength={100}
             placeholder="Run label"
             className="w-36 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white placeholder:text-white/30 focus:border-indigo-400/50 focus:outline-none" />
