@@ -11,6 +11,14 @@ type Stats = {
   cuts: number;
   percent: number;
   capped: boolean;
+  segments?: [number, number][];
+  words?: { t: string; s: number; e: number; x: boolean }[];
+  keptText?: string;
+  fillerRemoved?: number;
+  stageMs?: Record<string, number>;
+  engine?: string;
+  model?: string;
+  engineVersion?: string;
 };
 
 type Project = {
@@ -27,19 +35,36 @@ type QStatus = "pending" | "uploading" | "processing" | "done" | "error";
 type QItem = {
   id: string;
   name: string;
-  file: File;
+  file: File | null;
   status: QStatus;
   stage: string;
   error: string;
   resultUrl: string;
   stats: Stats | null;
+  jobId: string;
+  mode: string;
+  applied: string[];
 };
 
 const MODES = [
-  { id: "light", label: "Light", desc: "Minimal cuts" },
+  { id: "beginner", label: "Beginner", desc: "Safe, minimal cuts" },
   { id: "balanced", label: "Balanced", desc: "Recommended" },
-  { id: "aggressive", label: "Aggressive", desc: "Max trimming" },
+  { id: "aggressive", label: "Aggressive", desc: "Max pace" },
 ] as const;
+
+const CHIPS = ["Don't cut the intro", "Keep my pauses", "Cut harder", "Target 30 seconds"];
+
+function fmtSecs(s: number): string {
+  if (!isFinite(s) || s < 0) s = 0;
+  const m = Math.floor(s / 60);
+  const r = Math.round(s % 60);
+  return m > 0 ? `${m}m ${r}s` : `${r}s`;
+}
+function track(name: string, props?: Record<string, unknown>) {
+  try {
+    fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, props }) }).catch(() => {});
+  } catch {}
+}
 
 const STAGE_PCT: Record<string, number> = {
   Uploading: 15,
@@ -80,6 +105,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
   const [creditsLeft, setCreditsLeft] = useState(credits);
   const [files, setFiles] = useState<File[]>([]);
   const [mode, setMode] = useState<string>("balanced");
+  const [instructions, setInstructions] = useState("");
   const [busy, setBusy] = useState(false);
   const [queue, setQueue] = useState<QItem[]>([]);
   const [error, setError] = useState("");
@@ -138,59 +164,96 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
     setQueue((qs) => qs.map((x) => (x.id === id ? { ...x, ...p } : x)));
   }
 
+  async function finishJob(item: QItem, res: Response) {
+    if (!res.ok) {
+      const j = await safeJson(res);
+      if (res.status === 402 || j.outOfCredits) {
+        setCreditsLeft(0);
+        router.refresh();
+      }
+      throw new Error(j.error || "Upload failed. Please try again.");
+    }
+    const start = await safeJson(res);
+    const jobId = start.jobId;
+    if (!jobId) throw new Error(start.error || "Upload failed. Please try again.");
+    patch(item.id, { status: "processing", jobId, applied: Array.isArray(start.applied) ? start.applied : [] });
+
+    for (let i = 0; i < 300; i++) {
+      await sleep(2000);
+      let data: any;
+      try {
+        const s = await fetch(`/api/process?jobId=${jobId}`);
+        data = await safeJson(s);
+      } catch {
+        continue;
+      }
+      if (data.stage) patch(item.id, { stage: data.stage });
+      if (data.status === "error") throw new Error(data.error || "Processing failed.");
+      if (!data.status && data.error) throw new Error(data.error);
+      if (data.status === "done") {
+        const blob = await (await fetch(`/api/process?jobId=${jobId}&download=1`)).blob();
+        patch(item.id, {
+          status: "done", stage: "Done", resultUrl: URL.createObjectURL(blob),
+          stats: data.stats, mode: data.mode || "balanced",
+        });
+        if (!unlimited) setCreditsLeft((c) => Math.max(0, c - 1));
+        router.refresh();
+        return;
+      }
+    }
+    throw new Error("This is taking longer than expected. Please try again.");
+  }
+
+  function friendlyMsg(e: unknown): string {
+    const msg = e instanceof Error ? e.message : "Something went wrong.";
+    return /failed to fetch|networkerror|load failed/i.test(msg)
+      ? "Network problem — check your connection and try again."
+      : msg;
+  }
+
   async function processOne(item: QItem, onSuccess: () => void) {
     patch(item.id, { status: "uploading", stage: "Uploading", error: "" });
     try {
+      if (!item.file) throw new Error("Missing file.");
       if (item.file.size / 1024 / 1024 > MAX_UPLOAD_MB) {
         patch(item.id, { status: "error", error: `Too large (max ~${MAX_UPLOAD_MB} MB). Use 1080p, not 4K.` });
         return;
       }
+      if (instructions.trim()) track("instructions_used");
       const res = await fetch(
-        `/api/process?mode=${encodeURIComponent(mode)}&name=${encodeURIComponent(item.file.name)}`,
+        `/api/process?mode=${encodeURIComponent(mode)}&name=${encodeURIComponent(item.file.name)}&instructions=${encodeURIComponent(instructions.trim().slice(0, 500))}`,
         { method: "POST", headers: { "Content-Type": item.file.type || "video/mp4" }, body: item.file }
       );
-      if (!res.ok) {
-        const j = await safeJson(res);
-        if (res.status === 402 || j.outOfCredits) {
-          setCreditsLeft(0);
-          router.refresh();
-        }
-        throw new Error(j.error || "Upload failed. Please try again.");
-      }
-      const start = await safeJson(res);
-      const jobId = start.jobId;
-      if (!jobId) throw new Error(start.error || "Upload failed. Please try again.");
-      patch(item.id, { status: "processing" });
-
-      for (let i = 0; i < 300; i++) {
-        await sleep(2000);
-        let data: any;
-        try {
-          const s = await fetch(`/api/process?jobId=${jobId}`);
-          data = await safeJson(s);
-        } catch {
-          continue;
-        }
-        if (data.stage) patch(item.id, { stage: data.stage });
-        if (data.status === "error") throw new Error(data.error || "Processing failed.");
-        if (!data.status && data.error) throw new Error(data.error);
-        if (data.status === "done") {
-          const blob = await (await fetch(`/api/process?jobId=${jobId}&download=1`)).blob();
-          patch(item.id, { status: "done", stage: "Done", resultUrl: URL.createObjectURL(blob), stats: data.stats });
-          if (!unlimited) setCreditsLeft((c) => Math.max(0, c - 1));
-          onSuccess();
-          router.refresh();
-          return;
-        }
-      }
-      throw new Error("This is taking longer than expected. Please try again.");
+      await finishJob(item, res);
+      onSuccess();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Something went wrong.";
-      const friendly = /failed to fetch|networkerror|load failed/i.test(msg)
-        ? "Network problem — check your connection and try again."
-        : msg;
-      patch(item.id, { status: "error", error: friendly });
+      patch(item.id, { status: "error", error: friendlyMsg(e) });
     }
+  }
+
+  // Regenerate a finished edit with different settings — no re-upload needed.
+  async function regenerate(fromItem: QItem, newMode: string, newInstructions: string) {
+    if (busy || !fromItem.jobId) return;
+    track("reedit_clicked", { mode: newMode });
+    const item: QItem = {
+      id: `${Date.now()}-re`, name: fromItem.name, file: null,
+      status: "uploading", stage: "Starting", error: "", resultUrl: "",
+      stats: null, jobId: "", mode: newMode, applied: [],
+    };
+    setQueue([item]);
+    setBusy(true);
+    setFeedbackSent(false);
+    try {
+      const res = await fetch(
+        `/api/process?reedit=${encodeURIComponent(fromItem.jobId)}&mode=${encodeURIComponent(newMode)}&name=${encodeURIComponent(fromItem.name)}&instructions=${encodeURIComponent(newInstructions.trim().slice(0, 500))}`,
+        { method: "POST" }
+      );
+      await finishJob(item, res);
+    } catch (e) {
+      patch(item.id, { status: "error", error: friendlyMsg(e) });
+    }
+    setBusy(false);
+    loadProjects();
   }
 
   async function generate() {
@@ -205,6 +268,9 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
       error: "",
       resultUrl: "",
       stats: null,
+      jobId: "",
+      mode,
+      applied: [],
     }));
     setQueue(q);
     setBusy(true);
@@ -256,6 +322,31 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
             >
               <div className="text-sm font-medium">{m.label}</div>
               <div className="text-[10px] text-white/40">{m.desc}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* AI Edit Instructions (optional) */}
+      <div className="mb-6">
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">
+          AI edit instructions <span className="normal-case text-white/25">(optional)</span>
+        </p>
+        <textarea
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          disabled={busy}
+          rows={2}
+          maxLength={500}
+          placeholder="Tell the AI how to edit — e.g. Don't cut the intro. Target 30 seconds."
+          className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white placeholder:text-white/30 focus:border-indigo-400/50 focus:outline-none disabled:opacity-50"
+        />
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {CHIPS.map((c) => (
+            <button key={c} type="button" disabled={busy}
+              onClick={() => setInstructions((v) => (v ? v + " " + c + "." : c + "."))}
+              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-white/55 transition hover:border-indigo-400/40 hover:text-white disabled:opacity-40">
+              + {c}
             </button>
           ))}
         </div>
@@ -360,9 +451,9 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
         </div>
       )}
 
-      {/* Single-file preview */}
-      {single && doneItems[0].resultUrl && (
-        <video src={doneItems[0].resultUrl} controls className="mx-auto mt-4 w-full rounded-xl" style={{ maxHeight: "70vh", objectFit: "contain", background: "#000" }} />
+      {/* Review experience for a single finished edit */}
+      {single && doneItems[0].resultUrl && doneItems[0].stats && (
+        <ReviewPanel item={doneItems[0]} busy={busy} onRegenerate={regenerate} />
       )}
 
       {/* Feedback after batch completes */}
@@ -424,6 +515,146 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Review panel: everything the AI improved, at a glance. Sections are
+// stacked and independent so future editing features slot in without a
+// redesign (add a new bordered block). ───
+function ReviewPanel({ item, busy, onRegenerate }: {
+  item: QItem; busy: boolean; onRegenerate: (item: QItem, mode: string, instructions: string) => void;
+}) {
+  const s = item.stats!;
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [reMode, setReMode] = useState<string>(item.mode || "balanced");
+  const [reInstructions, setReInstructions] = useState("");
+  const words = s.words || [];
+  const fillerSeconds = words.reduce((t, w) => (w.x ? t + (w.e - w.s) : t), 0);
+  const silenceSeconds = Math.max(0, s.removed - fillerSeconds);
+  const processMs = Object.values(s.stageMs || {}).reduce((a, b) => a + b, 0);
+  const originalUrl = item.jobId ? `/api/process?jobId=${item.jobId}&original=1` : "";
+  const styleLabel = (MODES.find((m) => m.id === item.mode) || MODES[1]).label;
+
+  useEffect(() => {
+    track("preview_viewed", { mode: item.mode });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="glass mt-6 overflow-hidden rounded-2xl">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-4">
+        <div>
+          <p className="font-semibold text-white">Your edit is ready ✨</p>
+          <p className="mt-0.5 text-xs text-white/40">
+            {styleLabel} style · processed in {fmtSecs(processMs / 1000)} · engine v{s.engineVersion || "—"}
+          </p>
+        </div>
+        <a href={item.resultUrl} download={`${item.name.replace(/\.[^.]+$/, "")}-trimiq.mp4`}
+          onClick={() => track("download_clicked", { mode: item.mode })}
+          className="rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/45">
+          Download
+        </a>
+      </div>
+
+      <div className="p-4">
+        <div className="mb-3 flex justify-center">
+          <div className="flex rounded-xl border border-white/10 bg-white/[0.04] p-0.5">
+            <button onClick={() => setShowOriginal(false)}
+              className={`rounded-lg px-4 py-1.5 text-xs font-medium transition ${!showOriginal ? "bg-indigo-500/30 text-white" : "text-white/50 hover:text-white"}`}>
+              ✨ Edited · {fmtSecs(s.cleaned)}
+            </button>
+            <button onClick={() => setShowOriginal(true)} disabled={!originalUrl}
+              className={`rounded-lg px-4 py-1.5 text-xs font-medium transition ${showOriginal ? "bg-indigo-500/30 text-white" : "text-white/50 hover:text-white"} disabled:opacity-40`}>
+              Original · {fmtSecs(s.original)}
+            </button>
+          </div>
+        </div>
+        <video key={showOriginal ? "o" : "e"} src={showOriginal ? originalUrl : item.resultUrl} controls
+          className="mx-auto w-full rounded-xl" style={{ maxHeight: "60vh", objectFit: "contain", background: "#000" }} />
+
+        {s.segments && s.segments.length > 0 && s.original > 0 && (
+          <div className="mt-3">
+            <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-red-500/25">
+              {s.segments.map(([a, b], i) => (
+                <div key={i} className="absolute top-0 h-full bg-emerald-400/80"
+                  style={{ left: `${(a / s.original) * 100}%`, width: `${Math.max(0.5, ((b - a) / s.original) * 100)}%` }} />
+              ))}
+            </div>
+            <p className="mt-1 text-center text-[10px] text-white/35">green = kept · red = removed by the AI</p>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-px border-t border-white/10 bg-white/5 sm:grid-cols-4">
+        <Metric label="Cuts made" value={String(s.cuts)} />
+        <Metric label="Silence removed" value={fmtSecs(silenceSeconds)} />
+        <Metric label="Fillers removed" value={String(s.fillerRemoved ?? 0)} sub="um, uh, like…" />
+        <Metric label="Time saved" value={fmtSecs(s.removed)} accent />
+        <Metric label="Editing style" value={styleLabel} />
+        <Metric label="Captions" value="Coming soon" dim />
+        <Metric label="Processing time" value={fmtSecs(processMs / 1000)} />
+        <Metric label="Engine" value={s.engine === "smart" ? "AI transcript" : "Audio-based"} sub={s.model || undefined} />
+      </div>
+
+      {item.applied.length > 0 && (
+        <div className="border-t border-white/10 p-4">
+          <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-white/40">Your instructions, applied</p>
+          <div className="flex flex-wrap gap-1.5">
+            {item.applied.map((a) => (
+              <span key={a} className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-200">✓ {a}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {words.length > 0 && (
+        <details className="border-t border-white/10 p-4">
+          <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-white/40">
+            Transcript · struck-through words were removed
+          </summary>
+          <p className="mt-3 max-h-48 overflow-y-auto text-sm leading-relaxed text-white/70">
+            {words.map((w, i) =>
+              w.x
+                ? <s key={i} className="mx-0.5 text-red-300/60">{w.t}</s>
+                : <span key={i} className="mx-0.5">{w.t}</span>
+            )}
+          </p>
+        </details>
+      )}
+
+      <div className="border-t border-white/10 p-4">
+        <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-white/40">
+          Not quite right? Regenerate with different settings — no re-upload needed
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-xl border border-white/10 bg-white/[0.04] p-0.5">
+            {MODES.map((m) => (
+              <button key={m.id} onClick={() => setReMode(m.id)} disabled={busy}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${reMode === m.id ? "bg-indigo-500/30 text-white" : "text-white/50 hover:text-white"} disabled:opacity-40`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <input value={reInstructions} onChange={(e) => setReInstructions(e.target.value)} disabled={busy} maxLength={500}
+            placeholder="Optional instructions…"
+            className="min-w-[10rem] flex-1 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white placeholder:text-white/30 focus:border-indigo-400/50 focus:outline-none disabled:opacity-50" />
+          <button onClick={() => onRegenerate(item, reMode, reInstructions)} disabled={busy}
+            className="rounded-xl border border-indigo-400/40 bg-indigo-500/10 px-4 py-2 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-500/20 disabled:opacity-40">
+            ↻ Regenerate
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, sub, accent, dim }: { label: string; value: string; sub?: string; accent?: boolean; dim?: boolean }) {
+  return (
+    <div className="bg-ink p-3.5 text-center">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-white/35">{label}</div>
+      <div className={`mt-1 text-lg font-bold leading-tight ${accent ? "text-emerald-300" : dim ? "text-white/35" : "text-white"}`}>{value}</div>
+      {sub && <div className="mt-0.5 text-[10px] text-white/30">{sub}</div>}
     </div>
   );
 }
