@@ -13,13 +13,13 @@
 //     clips process consistently without running the box out of memory.
 // ===========================================================================
 import { spawn } from "node:child_process";
-import { readFile, unlink } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.1.0";
+export const ENGINE_VERSION = "7.2.0";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -51,6 +51,13 @@ export type Settings = {
 // Normalized instruction overrides — applied on top of a mode preset. This is
 // the stable contract between instruction parsers (rule-based v1 today, LLM v2
 // later) and the engine.
+export type CaptionOptions = {
+  enabled: boolean;
+  color?: string; // named color or #rrggbb
+  size?: "small" | "medium" | "large";
+  position?: "top" | "center" | "bottom";
+};
+
 export type EditOverrides = {
   protectStartSeconds?: number;
   targetDurationSec?: number;
@@ -59,6 +66,7 @@ export type EditOverrides = {
   keepWords?: string[];
   extraFillerWords?: string[];
   pace?: "slower" | "faster";
+  captions?: CaptionOptions;
 };
 
 export const MODE_PRESETS: Record<EditMode, Settings> = {
@@ -98,6 +106,7 @@ export type CleanResult = {
   keptText: string;
   fillerRemoved: number;
   takesRemoved: number;
+  captions: { color: string; size: string; position: string; count: number; coverage: number } | null;
   words: { t: string; s: number; e: number; x: boolean }[];
 };
 
@@ -176,7 +185,7 @@ function planFromSilences(silences: [number, number][], duration: number, s: Set
 }
 
 // ===================== LAYER 2: transcription-driven =======================
-type Word = { w: string; term: boolean; start: number; end: number };
+type Word = { w: string; raw: string; term: boolean; start: number; end: number };
 type Line = { words: Word[]; norm: string[]; start: number; end: number; term: boolean };
 
 const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
@@ -212,7 +221,7 @@ async function transcribe(audioPath: string, apiKey: string, model: string): Pro
       const json: any = await res.json();
       const words = json?.results?.channels?.[0]?.alternatives?.[0]?.words ?? [];
       return words
-        .map((x: any) => ({ w: norm(x.word), term: /[.?!]$/.test(x.punctuated_word || x.word || ""), start: x.start, end: x.end }))
+        .map((x: any) => ({ w: norm(x.word), raw: String(x.punctuated_word || x.word || ""), term: /[.?!]$/.test(x.punctuated_word || x.word || ""), start: x.start, end: x.end }))
         .filter((x: Word) => x.w);
     } catch (e) {
       lastErr = e;
@@ -427,6 +436,82 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): { seg
   return { segs: mergeRanges(segs, s.minClipLength), allWords, mask, takesRemoved: totalLines - kept.length };
 }
 
+// ============================== captions ===================================
+const CAPTION_COLORS: Record<string, string> = {
+  white: "FFFFFF", yellow: "FFD400", blue: "3DA5FF", green: "3DFF88",
+  pink: "FF6BD6", red: "FF4D4D", purple: "B18CFF", orange: "FF9E3D", black: "101010",
+};
+
+// ASS colors are &HAABBGGRR (blue-green-red).
+function assColor(c?: string): string {
+  let hex = "FFFFFF";
+  if (c) {
+    const named = CAPTION_COLORS[c.toLowerCase().trim()];
+    if (named) hex = named;
+    else if (/^#?[0-9a-fA-F]{6}$/.test(c.trim())) hex = c.trim().replace("#", "").toUpperCase();
+  }
+  return `&H00${hex.slice(4, 6)}${hex.slice(2, 4)}${hex.slice(0, 2)}`;
+}
+
+function assTime(t: number): string {
+  const cs = Math.max(0, Math.round(t * 100));
+  const h = Math.floor(cs / 360000);
+  const m = Math.floor((cs % 360000) / 6000);
+  const s = Math.floor((cs % 6000) / 100);
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs % 100).padStart(2, "0")}`;
+}
+
+// Phrase-level caption events on the OUTPUT (post-cut) timeline: each kept
+// word's timestamp is remapped through the kept segments so captions stay in
+// sync with the edited video.
+function buildCaptionEvents(keptWords: Word[], segs: [number, number][]): { start: number; end: number; text: string }[] {
+  let acc = 0;
+  const map = segs.map(([a, b]) => { const m = { a, b, off: acc }; acc += b - a; return m; });
+  const toOut = (t: number): number | null => {
+    for (const m of map) if (t >= m.a - 0.001 && t <= m.b + 0.001) return m.off + Math.min(Math.max(t - m.a, 0), m.b - m.a);
+    return null;
+  };
+  const events: { start: number; end: number; text: string }[] = [];
+  let cur: { start: number; end: number; words: string[] } | null = null;
+  const flush = () => {
+    if (cur && cur.words.length) events.push({ start: cur.start, end: cur.end, text: cur.words.join(" ") });
+    cur = null;
+  };
+  for (const w of keptWords) {
+    const s = toOut(w.start);
+    const e = toOut(w.end);
+    if (s === null || e === null) continue;
+    if (cur && (s - cur.end > 0.6 || cur.words.length >= 4 || e - cur.start > 2.4)) flush();
+    if (!cur) cur = { start: s, end: e, words: [] };
+    cur.words.push(w.raw || w.w);
+    cur.end = Math.max(cur.end, e);
+    if (/[.?!]$/.test(w.raw || "")) flush();
+  }
+  flush();
+  for (let i = 0; i < events.length; i++) {
+    const next = events[i + 1];
+    events[i].end = next ? Math.min(events[i].end + 0.25, next.start - 0.02) : events[i].end + 0.3;
+  }
+  return events.filter((ev) => ev.end > ev.start + 0.05 && ev.text.trim());
+}
+
+// TikTok-native look: bold, centered, heavy outline, sized for mobile.
+function buildAss(events: { start: number; end: number; text: string }[], w: number, h: number, o: { color: string; size: string; position: string }): string {
+  const size = o.size === "large" ? Math.round(h * 0.048) : o.size === "small" ? Math.round(h * 0.03) : Math.round(h * 0.038);
+  const align = o.position === "top" ? 8 : o.position === "center" ? 5 : 2;
+  const marginV = o.position === "center" ? 10 : Math.round(h * 0.16);
+  const outline = Math.max(2, Math.round(size / 11));
+  const esc = (t: string) => t.replace(/[{}\\]/g, "").replace(/\r?\n/g, " ");
+  let out2 =
+    "[Script Info]\nScriptType: v4.00+\n" +
+    `PlayResX: ${w}\nPlayResY: ${h}\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n` +
+    "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n" +
+    `Style: Cap,DejaVu Sans,${size},${assColor(o.color)},&H000000FF,&H00101010,&H7F000000,-1,0,0,0,100,100,0,0,1,${outline},1,${align},60,60,${marginV},1\n\n` +
+    "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n";
+  for (const ev of events) out2 += `Dialogue: 0,${assTime(ev.start)},${assTime(ev.end)},Cap,,0,0,0,,${esc(ev.text)}\n`;
+  return out2;
+}
+
 // ============================== rendering ==================================
 // trim + concat render. Validated empirically (synchronized flash+beep markers,
 // 30 cuts over 60s) to deliver:
@@ -439,12 +524,22 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): { seg
 //   • EXACT OUTPUT — no scale/crop/reframe; source resolution, aspect ratio, pixel
 //     format and frame rate preserved; crf 18 is visually lossless.
 async function renderFinal(
-  input: string, output: string, segs: [number, number][], _s: Settings, original: number
+  input: string, output: string, segs: [number, number][], _s: Settings, original: number, assPath: string | null
 ): Promise<boolean> {
-  // No cuts at all -> remux the original streams unchanged (bit-exact, fast).
+  // No cuts at all -> remux unchanged (bit-exact, fast) unless captions must be burned in.
   const noCuts = segs.length === 1 && segs[0][0] <= 0.05 && segs[0][1] >= original - 0.05;
-  if (noCuts) {
+  if (noCuts && !assPath) {
     await run(FFMPEG, ["-y", "-i", input, "-c", "copy", "-movflags", "+faststart", output]);
+    return false;
+  }
+  if (noCuts && assPath) {
+    const { w: w0, h: h0 } = await getDims(input);
+    const preset0 = Math.max(w0, h0) > 1920 ? "superfast" : "veryfast";
+    await run(FFMPEG, [
+      "-y", "-i", input, "-vf", `subtitles=${assPath}`,
+      "-c:v", "libx264", "-preset", preset0, "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "0",
+      "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", output,
+    ]);
     return false;
   }
 
@@ -470,7 +565,8 @@ async function renderFinal(
     f += `[0:a]atrim=${a.toFixed(4)}:${b.toFixed(4)},asetpts=PTS-STARTPTS[a${i}];`;
   });
   S.forEach((_, i) => (f += `[v${i}][a${i}]`));
-  f += `concat=n=${S.length}:v=1:a=1[v][a]`;
+  f += `concat=n=${S.length}:v=1:a=1[cv][a]`;
+  f += assPath ? `;[cv]subtitles=${assPath}[v]` : `;[cv]null[v]`;
 
   await run(FFMPEG, [
     "-y", "-i", input, "-filter_complex", f, "-map", "[v]", "-map", "[a]",
@@ -591,9 +687,51 @@ export async function cleanVideo(
   // Nothing to cut -> keep the whole clip as one segment.
   if (segs.length === 0) segs = [[0, original]];
 
+  // Burned-in captions (optional; requires the transcript path).
+  let assPath: string | null = null;
+  let captionInfo: { color: string; size: string; position: string; count: number; coverage: number } | null = null;
+  if (ov.captions && ov.captions.enabled && planInfo) {
+    try {
+      const keptWords = planInfo.allWords.filter((_, i) => !planInfo!.mask[i]);
+      const events = buildCaptionEvents(keptWords, segs);
+      if (events.length) {
+        const { w, h } = await getDims(input);
+        const style = {
+          color: (ov.captions.color || "white").toLowerCase(),
+          size: ov.captions.size || "medium",
+          position: ov.captions.position || "bottom",
+        };
+        assPath = join(dirname(input), `cap-${Date.now()}.ass`);
+        await writeFile(assPath, buildAss(events, w, h, style), "utf8");
+        const keptDur = segs.reduce((t, sg) => t + (sg[1] - sg[0]), 0);
+        const covered = events.reduce((t, ev) => t + (ev.end - ev.start), 0);
+        captionInfo = { ...style, count: events.length, coverage: keptDur > 0 ? Math.min(1, Math.round((covered / keptDur) * 100) / 100) : 0 };
+      }
+    } catch (e) {
+      console.error("[ENGINE] caption build failed:", (e as any)?.message || e);
+      assPath = null;
+      captionInfo = null;
+    }
+  }
+
   stage("Rendering");
-  const capped = await renderFinal(input, output, segs, settings, original);
+  let capped = false;
+  try {
+    capped = await renderFinal(input, output, segs, settings, original, assPath);
+  } catch (e) {
+    if (assPath) {
+      // Graceful degradation: captioned render failed (e.g. missing fonts) ->
+      // deliver the edit without captions rather than failing the job.
+      console.error("[ENGINE] captioned render failed, retrying without captions:", (e as any)?.message || e);
+      assPath = null;
+      captionInfo = null;
+      capped = await renderFinal(input, output, segs, settings, original, null);
+    } else {
+      throw e;
+    }
+  }
   stage("Finalizing");
+  if (assPath) await unlink(assPath).catch(() => {});
   for (const a of audioFiles) await unlink(a).catch(() => {});
 
   const cleaned = await getDuration(output).catch(() => original);
@@ -623,6 +761,7 @@ export async function cleanVideo(
     keptText: words.filter((w) => !w.x).map((w) => w.t).join(" "),
     fillerRemoved: words.filter((w) => w.x).length,
     takesRemoved: planInfo ? planInfo.takesRemoved : 0,
+    captions: captionInfo,
     words,
   };
 }
