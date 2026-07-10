@@ -67,7 +67,14 @@ function score(r: any, processingMs: number) {
 
   // Caption-quality proxy until real captions ship: transcript availability and
   // cleanliness of the kept text (fillers hurt readability).
-  const captionScore = r.mode === "smart" ? Math.max(0, 100 - fillerRemaining * 5 - (kept.length < 3 ? 50 : 0)) : 0;
+  // Real caption scoring when captions were rendered (coverage of kept speech);
+  // otherwise fall back to the transcript-cleanliness proxy.
+  const captionScore = r.captions
+    ? Math.max(0, Math.round(r.captions.coverage * 100) - fillerRemaining * 5)
+    : r.mode === "smart"
+      ? Math.max(0, 100 - fillerRemaining * 5 - (kept.length < 3 ? 50 : 0))
+      : 0;
+  if (r.captions && r.captions.coverage < 0.7) issues.push(`caption coverage only ${Math.round(r.captions.coverage * 100)}%`);
 
   const takesRemoved = r.takesRemoved ?? 0;
   const report =
@@ -84,6 +91,7 @@ function score(r: any, processingMs: number) {
     processingMs, captionScore,
     longestKeptPauseSec: Math.round(longestKeptPauseSec * 10) / 10,
     engine: r.mode, issues, report,
+    captions: r.captions || null,
   };
 }
 
@@ -110,13 +118,15 @@ export async function POST(req: NextRequest) {
   }
   const clipHash = createHash("sha256").update(await readFile(inPath)).digest("hex").slice(0, 16);
 
+  const withCaptions = p.get("captions") === "1";
+
   const results: any[] = [];
   try {
     for (const model of models.length ? models : ["nova-2"]) {
       for (const mode of modes.length ? modes : (["balanced"] as EditMode[])) {
         const outPath = join(dir, `${randomUUID()}-out.mp4`);
         const t0 = Date.now();
-        const r = await runExclusive(() => cleanVideo(inPath, outPath, { mode, model }));
+        const r = await runExclusive(() => cleanVideo(inPath, outPath, { mode, model, overrides: withCaptions ? { captions: { enabled: true } } : undefined }));
         const metrics = score(r, Date.now() - t0);
         await unlink(outPath).catch(() => {});
         await prisma.benchmarkRun.create({
