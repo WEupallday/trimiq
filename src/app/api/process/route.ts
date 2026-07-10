@@ -389,6 +389,16 @@ export async function POST(req: NextRequest) {
     const instructionsText = (req.nextUrl.searchParams.get("instructions") || "").slice(0, 500);
     const parsed = parseInstructions(instructionsText);
 
+    // Explicit caption controls (UI toggle) override / complement instructions.
+    if (req.nextUrl.searchParams.get("captions") === "1") {
+      parsed.overrides.captions = {
+        enabled: true,
+        color: (req.nextUrl.searchParams.get("capcolor") || parsed.overrides.captions?.color || "white").slice(0, 16),
+        size: ((req.nextUrl.searchParams.get("capsize") || parsed.overrides.captions?.size || "medium").slice(0, 8)) as any,
+        position: ((req.nextUrl.searchParams.get("cappos") || parsed.overrides.captions?.position || "bottom").slice(0, 8)) as any,
+      };
+    }
+
     // Re-edit: reuse a previous upload instead of receiving a new file.
     const reeditId = req.nextUrl.searchParams.get("reedit");
     let reusedInput: string | null = null;
@@ -458,6 +468,7 @@ export async function POST(req: NextRequest) {
           engine: result.mode,
           model: result.model,
           engineVersion: result.engineVersion,
+          captions: result.captions,
         };
         await track("edit_completed", {
           email: session.email,
@@ -467,7 +478,7 @@ export async function POST(req: NextRequest) {
             cuts: result.cuts, percentRemoved: result.percentRemoved, fillerRemoved: result.fillerRemoved,
             totalMs: Date.now() - startedAt,
             analyzeMs: result.stageMs["Analyzing"] || 0, renderMs: result.stageMs["Rendering"] || 0,
-            reedit: !!reusedInput, instructions: !!instructionsText,
+            reedit: !!reusedInput, instructions: !!instructionsText, captions: !!result.captions,
           },
         });
         await prisma.user
