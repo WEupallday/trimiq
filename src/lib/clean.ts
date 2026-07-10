@@ -18,11 +18,14 @@ import { dirname, join } from "node:path";
 import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
+// Bump on every engine behavior change — benchmark history is keyed by this.
+export const ENGINE_VERSION = "7.1.0";
+
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
 
 // ------------------------------ modes --------------------------------------
-export type EditMode = "light" | "balanced" | "aggressive";
+export type EditMode = "beginner" | "balanced" | "aggressive";
 
 export type Settings = {
   silenceThresholdDb: number | "auto";
@@ -38,10 +41,28 @@ export type Settings = {
   removeSoftFiller: boolean;
   nearPrefixThresh: number;
   dropRatio: number;
+  // Optional per-job extensions (driven by AI Edit Instructions)
+  keepWords?: string[];
+  extraFillerWords?: string[];
+  protectStartSeconds?: number;
+  targetDurationSec?: number;
+};
+
+// Normalized instruction overrides — applied on top of a mode preset. This is
+// the stable contract between instruction parsers (rule-based v1 today, LLM v2
+// later) and the engine.
+export type EditOverrides = {
+  protectStartSeconds?: number;
+  targetDurationSec?: number;
+  keepAllPauses?: boolean;
+  keepSoftFillers?: boolean;
+  keepWords?: string[];
+  extraFillerWords?: string[];
+  pace?: "slower" | "faster";
 };
 
 export const MODE_PRESETS: Record<EditMode, Settings> = {
-  light: {
+  beginner: {
     silenceThresholdDb: "auto", minPause: 0.7, leadIn: 0.14, trailOut: 0.22,
     naturalPause: 0.55, wordPad: 0.12, minClipLength: 0.25, fade: 0.05,
     sentenceGap: 0.8, removeFiller: true, removeSoftFiller: false,
@@ -71,6 +92,12 @@ export type CleanResult = {
   mode: "smart" | "audio";
   editMode: EditMode;
   capped: boolean;
+  engineVersion: string;
+  model: string;
+  stageMs: Record<string, number>;
+  keptText: string;
+  fillerRemoved: number;
+  words: { t: string; s: number; e: number; x: boolean }[];
 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -167,15 +194,17 @@ async function extractAudio(input: string): Promise<string> {
   return out;
 }
 
-async function transcribe(audioPath: string, apiKey: string): Promise<Word[]> {
+async function transcribe(audioPath: string, apiKey: string, model: string): Promise<Word[]> {
   const bytes = await readFile(audioPath);
   // One quick retry on transient Deepgram/network errors so a blip can't silently
   // drop us to the weaker audio-only path.
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      // filler_words=true is essential: without it Deepgram omits um/uh from the
+      // transcript entirely, so the engine can never cut them.
       const res = await fetch(
-        "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&punctuate=true",
+        `https://api.deepgram.com/v1/listen?model=${encodeURIComponent(model)}&smart_format=true&punctuate=true&filler_words=true`,
         { method: "POST", headers: { Authorization: `Token ${apiKey}`, "Content-Type": "audio/wav" }, body: bytes }
       );
       if (!res.ok) throw new Error(`Deepgram ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -286,9 +315,13 @@ const INTENSIFIER = new Set(["very","really","so","no","go","yeah","yes","ok","o
 // to physically excise from the final cut.
 function fillerMask(kw: Word[], s: Settings): boolean[] {
   const mask = new Array<boolean>(kw.length).fill(false);
-  if (!s.removeFiller) return mask;
+  const keepSet = new Set((s.keepWords || []).map(norm));
+  const extraSet = new Set((s.extraFillerWords || []).map(norm));
   for (let i = 0; i < kw.length; i++) {
     const w = kw[i].w;
+    if (keepSet.has(w)) continue;
+    if (extraSet.has(w)) { mask[i] = true; continue; }
+    if (!s.removeFiller) continue;
     if (HARD_FILLER.has(w)) { mask[i] = true; continue; }
     if (!s.removeSoftFiller) continue;
 
@@ -320,7 +353,7 @@ function fillerMask(kw: Word[], s: Settings): boolean[] {
   }
   // Stutter pass: collapse fast immediate word repeats ("the the", "this this"),
   // dropping the earlier copy. Intensifiers are left alone so "very very" survives.
-  for (let i = 0; i < kw.length; i++) {
+  if (s.removeFiller) for (let i = 0; i < kw.length; i++) {
     if (mask[i]) continue;
     let j = i + 1;
     while (j < kw.length && mask[j]) j++;
@@ -342,7 +375,7 @@ function mergeRanges(ranges: [number, number][], minLen: number): [number, numbe
   return merged.filter(([a, b]) => b - a >= minLen);
 }
 
-function planFromTranscript(words: Word[], duration: number, s: Settings): [number, number][] {
+function planFromTranscript(words: Word[], duration: number, s: Settings): { segs: [number, number][]; allWords: Word[]; mask: boolean[] } {
   let lines = splitLines(words, s.sentenceGap).map(collapseRestart).map(collapseRepeats);
   lines = lines.filter((l) => !isCorrectionLine(l));
 
@@ -369,7 +402,7 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
   const allWords = kept.flatMap((l) => l.words);
   const mask = fillerMask(allWords, s);
   const keep = allWords.filter((_, i) => !mask[i]);
-  if (!keep.length) return [];
+  if (!keep.length) return { segs: [], allWords, mask };
 
   // Build kept time segments. Cut (excise) between two kept words when there is a
   // real pause longer than naturalPause, OR a filler/dropped word sat between them
@@ -389,7 +422,7 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): [numb
     segs.push([segStart, Math.min(duration, cur.end + pad)]);
     segStart = Math.max(0, next.start - pad);
   }
-  return mergeRanges(segs, s.minClipLength);
+  return { segs: mergeRanges(segs, s.minClipLength), allWords, mask };
 }
 
 // ============================== rendering ==================================
@@ -463,17 +496,45 @@ function countCuts(segs: [number, number][], duration: number): number {
 export async function cleanVideo(
   input: string,
   output: string,
-  opts: { mode?: EditMode; fileBytes?: number; onStage?: (stage: string) => void } = {}
+  opts: { mode?: EditMode; fileBytes?: number; onStage?: (stage: string) => void; overrides?: EditOverrides; model?: string } = {}
 ): Promise<CleanResult> {
   const editMode: EditMode = opts.mode || "balanced";
-  const settings = MODE_PRESETS[editMode];
-  const stage = opts.onStage || (() => {});
+  const settings: Settings = { ...MODE_PRESETS[editMode] };
+
+  // AI Edit Instructions: apply normalized overrides on top of the preset.
+  const ov = opts.overrides || {};
+  if (ov.pace === "faster") {
+    settings.naturalPause = Math.max(0.15, settings.naturalPause - 0.08);
+    settings.minPause = Math.max(0.2, settings.minPause - 0.1);
+    settings.trailOut = Math.max(0.08, settings.trailOut - 0.04);
+  }
+  if (ov.pace === "slower") { settings.naturalPause += 0.15; settings.minPause += 0.25; }
+  if (ov.keepSoftFillers) settings.removeSoftFiller = false;
+  if (ov.keepAllPauses) { settings.naturalPause = 1e9; settings.minPause = 1e9; }
+  if (ov.keepWords && ov.keepWords.length) settings.keepWords = ov.keepWords;
+  if (ov.extraFillerWords && ov.extraFillerWords.length) settings.extraFillerWords = ov.extraFillerWords;
+  if (ov.protectStartSeconds) settings.protectStartSeconds = ov.protectStartSeconds;
+  if (ov.targetDurationSec) settings.targetDurationSec = ov.targetDurationSec;
+
+  const model = opts.model || process.env.DEEPGRAM_MODEL || "nova-2";
+
+  // Per-stage wall-clock timing (analytics + benchmark reports).
+  const stageMs: Record<string, number> = {};
+  let stageName = "";
+  let stageStart = Date.now();
+  const stage = (s: string) => {
+    if (stageName) stageMs[stageName] = (stageMs[stageName] || 0) + (Date.now() - stageStart);
+    stageName = s;
+    stageStart = Date.now();
+    (opts.onStage || (() => {}))(s);
+  };
 
   stage("Analyzing");
   const original = await getDuration(input);
 
   let segs: [number, number][] = [];
   let mode: "smart" | "audio" = "audio";
+  let planInfo: { allWords: Word[]; mask: boolean[] } | null = null;
   const audioFiles: string[] = [];
 
   const key = process.env.DEEPGRAM_API_KEY;
@@ -481,10 +542,27 @@ export async function cleanVideo(
     try {
       const audio = await extractAudio(input);
       audioFiles.push(audio);
-      const words = await transcribe(audio, key);
+      const words = await transcribe(audio, key, model);
       if (words.length >= 3) {
-        const smart = planFromTranscript(words, original, settings);
-        if (smart.length) { segs = smart; mode = "smart"; }
+        let plan = planFromTranscript(words, original, settings);
+        // Target duration: escalate pacing until the kept time fits.
+        if (settings.targetDurationSec) {
+          const keptDur = (p: { segs: [number, number][] }) => p.segs.reduce((t, seg) => t + (seg[1] - seg[0]), 0);
+          let tighter: Settings = { ...settings };
+          let guard = 0;
+          while (keptDur(plan) > settings.targetDurationSec * 1.15 && guard < 4) {
+            tighter = {
+              ...tighter,
+              naturalPause: Math.max(0.12, tighter.naturalPause - 0.07),
+              minPause: Math.max(0.18, tighter.minPause - 0.08),
+              removeSoftFiller: true,
+              nearPrefixThresh: Math.max(0.5, tighter.nearPrefixThresh - 0.05),
+            };
+            plan = planFromTranscript(words, original, tighter);
+            guard++;
+          }
+        }
+        if (plan.segs.length) { segs = plan.segs; mode = "smart"; planInfo = plan; }
       }
       console.log(`[ENGINE] transcription ok: ${words.length} words -> mode=${mode}, segments=${segs.length}`);
     } catch (e) {
@@ -502,6 +580,12 @@ export async function cleanVideo(
     segs = planFromSilences(silences, original, settings);
   }
 
+  // Protected intro: always keep [0, N] exactly as filmed.
+  if (settings.protectStartSeconds) {
+    const p = Math.min(settings.protectStartSeconds, original);
+    segs = mergeRanges([[0, p], ...segs], 0.05);
+  }
+
   // Nothing to cut -> keep the whole clip as one segment.
   if (segs.length === 0) segs = [[0, original]];
 
@@ -512,6 +596,15 @@ export async function cleanVideo(
 
   const cleaned = await getDuration(output).catch(() => original);
   const removed = Math.max(0, original - cleaned);
+  stage("Done");
+  const words = planInfo
+    ? planInfo.allWords.map((w, i) => ({
+        t: w.w,
+        s: Math.round(w.start * 100) / 100,
+        e: Math.round(w.end * 100) / 100,
+        x: !!planInfo!.mask[i],
+      }))
+    : [];
   return {
     original,
     cleaned,
@@ -522,5 +615,11 @@ export async function cleanVideo(
     mode,
     editMode,
     capped,
+    engineVersion: ENGINE_VERSION,
+    model,
+    stageMs,
+    keptText: words.filter((w) => !w.x).map((w) => w.t).join(" "),
+    fillerRemoved: words.filter((w) => w.x).length,
+    words,
   };
 }
