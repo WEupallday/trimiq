@@ -102,3 +102,33 @@ model ProductSnapshot {
 
   @@index([productId, capturedAt])
 }
+
+
+// ---- Product analytics (self-hosted; one row per event) ----
+model Event {
+  id     String   @id @default(cuid())
+  ts     DateTime @default(now())
+  name   String
+  email  String?
+  anonId String?
+  props  Json?
+
+  @@index([name, ts])
+  @@index([email, ts])
+}
+
+// ---- Editing-engine benchmark results (eval harness, keyed by engine version) ----
+model BenchmarkRun {
+  id            String   @id @default(cuid())
+  ts            DateTime @default(now())
+  engineVersion String
+  label         String
+  clipName      String
+  clipHash      String
+  mode          String
+  model         String
+  metrics       Json
+
+  @@index([clipHash, ts])
+  @@index([engineVersion, ts])
+}
