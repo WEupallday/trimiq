@@ -97,6 +97,7 @@ export type CleanResult = {
   stageMs: Record<string, number>;
   keptText: string;
   fillerRemoved: number;
+  takesRemoved: number;
   words: { t: string; s: number; e: number; x: boolean }[];
 };
 
@@ -375,8 +376,9 @@ function mergeRanges(ranges: [number, number][], minLen: number): [number, numbe
   return merged.filter(([a, b]) => b - a >= minLen);
 }
 
-function planFromTranscript(words: Word[], duration: number, s: Settings): { segs: [number, number][]; allWords: Word[]; mask: boolean[] } {
+function planFromTranscript(words: Word[], duration: number, s: Settings): { segs: [number, number][]; allWords: Word[]; mask: boolean[]; takesRemoved: number } {
   let lines = splitLines(words, s.sentenceGap).map(collapseRestart).map(collapseRepeats);
+  const totalLines = lines.length;
   lines = lines.filter((l) => !isCorrectionLine(l));
 
   // Cluster consecutive retakes of the same statement and keep only the best
@@ -402,7 +404,7 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): { seg
   const allWords = kept.flatMap((l) => l.words);
   const mask = fillerMask(allWords, s);
   const keep = allWords.filter((_, i) => !mask[i]);
-  if (!keep.length) return { segs: [], allWords, mask };
+  if (!keep.length) return { segs: [], allWords, mask, takesRemoved: totalLines - kept.length };
 
   // Build kept time segments. Cut (excise) between two kept words when there is a
   // real pause longer than naturalPause, OR a filler/dropped word sat between them
@@ -422,7 +424,7 @@ function planFromTranscript(words: Word[], duration: number, s: Settings): { seg
     segs.push([segStart, Math.min(duration, cur.end + pad)]);
     segStart = Math.max(0, next.start - pad);
   }
-  return { segs: mergeRanges(segs, s.minClipLength), allWords, mask };
+  return { segs: mergeRanges(segs, s.minClipLength), allWords, mask, takesRemoved: totalLines - kept.length };
 }
 
 // ============================== rendering ==================================
@@ -534,7 +536,7 @@ export async function cleanVideo(
 
   let segs: [number, number][] = [];
   let mode: "smart" | "audio" = "audio";
-  let planInfo: { allWords: Word[]; mask: boolean[] } | null = null;
+  let planInfo: { allWords: Word[]; mask: boolean[]; takesRemoved: number } | null = null;
   const audioFiles: string[] = [];
 
   const key = process.env.DEEPGRAM_API_KEY;
@@ -620,6 +622,7 @@ export async function cleanVideo(
     stageMs,
     keptText: words.filter((w) => !w.x).map((w) => w.t).join(" "),
     fillerRemoved: words.filter((w) => w.x).length,
+    takesRemoved: planInfo ? planInfo.takesRemoved : 0,
     words,
   };
 }
