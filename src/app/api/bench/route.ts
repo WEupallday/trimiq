@@ -92,6 +92,7 @@ function score(r: any, processingMs: number) {
     longestKeptPauseSec: Math.round(longestKeptPauseSec * 10) / 10,
     engine: r.mode, issues, report,
     captions: r.captions || null,
+    zooms: r.zooms || null,
   };
 }
 
