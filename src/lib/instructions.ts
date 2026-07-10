@@ -88,6 +88,26 @@ export function parseInstructions(text: string): ParsedInstructions {
       hit = true;
     }
 
+    // Captions: "add captions", "make the captions blue", "big captions at the top"
+    if (/captions?|subtitles?/.test(p)) {
+      const cap = overrides.captions || { enabled: true };
+      cap.enabled = !/\b(no|without|remove|disable)\b/.test(p);
+      const colorM = p.match(/\b(white|yellow|blue|green|pink|red|purple|orange|black)\b/);
+      if (colorM) cap.color = colorM[1];
+      if (/\b(big|large|huge)\b/.test(p)) cap.size = "large";
+      else if (/\b(small|tiny|subtle)\b/.test(p)) cap.size = "small";
+      if (/\btop\b/.test(p)) cap.position = "top";
+      else if (/\b(middle|center|centre)\b/.test(p)) cap.position = "center";
+      else if (/\bbottom\b/.test(p)) cap.position = "bottom";
+      overrides.captions = cap;
+      applied.push(
+        cap.enabled
+          ? `Captions on${cap.color ? ` (${cap.color})` : ""}${cap.size ? `, ${cap.size}` : ""}${cap.position ? `, ${cap.position}` : ""}`
+          : "Captions off"
+      );
+      hit = true;
+    }
+
     if (!hit) unrecognized.push(p);
   }
 
