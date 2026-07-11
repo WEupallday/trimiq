@@ -290,6 +290,11 @@ export async function runPrioritized<T>(
   }
 }
 
+// Current global load (admin dashboard).
+export function queueDepth(): number {
+  return gate.active + gate.waiters.length;
+}
+
 // Back-compat wrapper (benchmark harness): decent priority, own lane.
 export async function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
   return runPrioritized(2, "__system__", 99, fn);
