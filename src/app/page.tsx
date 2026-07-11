@@ -117,6 +117,10 @@ export default async function Home() {
                 THIS IS THE GOOD TAKE
               </div>
             </div>
+            {/* Edit Instructions input (typed live) */}
+            <div className="tiq-input absolute flex items-center rounded-lg border border-white/15 bg-white/[0.06] px-2.5">
+              <span className="tiq-type overflow-hidden whitespace-nowrap font-mono text-[10px] leading-none text-white/80">add zooms, blue captions</span>
+            </div>
             {/* status line */}
             <div className="tiq-analyze absolute text-[11px] text-indigo-300/80">Analyzing speech &middot; removing silence, fillers &amp; bad takes&hellip;</div>
             {/* timeline: kept (indigo) vs cut (red) */}
@@ -149,11 +153,12 @@ export default async function Home() {
             <span className="hidden sm:inline">watch TrimIQ clean a clip &mdash; on a loop</span>
           </div>
           <style>{`
-          /* Base = finished frame (what reduced-motion users see): clean edit,
-             captions on, ready badge. The 12s loop only runs when motion is OK. */
+          /* Base = finished frame (reduced-motion users see this static). */
           .tiq-file{left:6%;top:16%;opacity:0}
           .tiq-drop{left:42%;top:8%;width:52%;height:46%;opacity:0}
           .tiq-preview{left:42%;top:8%;width:52%;height:46%;opacity:1}
+          .tiq-input{left:42%;top:58%;width:52%;height:9%;opacity:0}
+          .tiq-type{width:24ch;border-right:2px solid transparent}
           .tiq-analyze{left:6%;bottom:32%;opacity:0}
           .tiq-timeline{left:6%;right:6%;bottom:16%;height:9%;opacity:1}
           .tiq-cut{flex-grow:0;flex-shrink:0;flex-basis:0%;opacity:0}
@@ -161,31 +166,36 @@ export default async function Home() {
           .tiq-badge{right:6%;bottom:5%;opacity:1}
           .tiq-cursor{left:88%;top:85%;opacity:0}
           @media (prefers-reduced-motion: no-preference){
-            .tiq-cursor{opacity:1;animation:tiqCursor 12s cubic-bezier(.45,.05,.25,1) infinite}
-            .tiq-click{animation:tiqClick 12s linear infinite;transform-origin:25% 15%}
-            .tiq-file{animation:tiqFile 12s cubic-bezier(.45,.05,.25,1) infinite}
-            .tiq-drop{animation:tiqDrop 12s linear infinite}
-            .tiq-preview{animation:tiqPreview 12s linear infinite}
-            .tiq-analyze{animation:tiqAnalyze 12s linear infinite}
-            .tiq-timeline{animation:tiqTimeline 12s linear infinite}
-            .tiq-cutA{animation:tiqCutA 12s ease-in-out infinite}
-            .tiq-cutB{animation:tiqCutB 12s ease-in-out infinite}
-            .tiq-cutC{animation:tiqCutC 12s ease-in-out infinite}
-            .tiq-cap{animation:tiqCap 12s cubic-bezier(.34,1.56,.64,1) infinite}
-            .tiq-badge{animation:tiqBadge 12s ease-out infinite}
+            .tiq-cursor{opacity:1;animation:tiqCursor 13s cubic-bezier(.45,.05,.25,1) infinite}
+            .tiq-click{animation:tiqClick 13s linear infinite;transform-origin:25% 15%}
+            .tiq-file{animation:tiqFile 13s cubic-bezier(.45,.05,.25,1) infinite}
+            .tiq-drop{animation:tiqDrop 13s linear infinite}
+            .tiq-preview{animation:tiqPreview 13s linear infinite}
+            .tiq-input{animation:tiqInput 13s linear infinite}
+            .tiq-type{width:0ch;animation:tiqType 13s infinite,tiqCaret 1s steps(1) infinite}
+            .tiq-analyze{animation:tiqAnalyze 13s linear infinite}
+            .tiq-timeline{animation:tiqTimeline 13s linear infinite}
+            .tiq-cutA{animation:tiqCutA 13s ease-in-out infinite}
+            .tiq-cutB{animation:tiqCutB 13s ease-in-out infinite}
+            .tiq-cutC{animation:tiqCutC 13s ease-in-out infinite}
+            .tiq-cap{animation:tiqCap 13s cubic-bezier(.34,1.56,.64,1) infinite}
+            .tiq-badge{animation:tiqBadge 13s ease-out infinite}
           }
-          @keyframes tiqCursor{0%{left:88%;top:85%}8%,12%{left:16%;top:22%}24%,30%{left:60%;top:26%}55%{left:64%;top:48%}70%,84%{left:79%;top:76%}100%{left:88%;top:85%}}
-          @keyframes tiqClick{0%,7.5%,10.5%,70.5%,73.5%,100%{transform:scale(1)}9%,72%{transform:scale(.72)}}
-          @keyframes tiqFile{0%,9%{left:6%;top:16%;opacity:1;transform:scale(1)}24%{left:46%;top:16%;opacity:1;transform:scale(1)}28%{left:48%;top:20%;opacity:0;transform:scale(.6)}95%{left:6%;top:16%;opacity:0;transform:scale(1)}100%{left:6%;top:16%;opacity:1}}
-          @keyframes tiqDrop{0%,22%{opacity:1;background:transparent}25%{opacity:1;background:rgba(129,140,248,.14)}30%,96%{opacity:0;background:transparent}100%{opacity:1}}
-          @keyframes tiqPreview{0%,28%{opacity:0}34%,95%{opacity:1}99%,100%{opacity:0}}
-          @keyframes tiqAnalyze{0%,31%{opacity:0}35%,46%{opacity:1}50%,100%{opacity:0}}
-          @keyframes tiqTimeline{0%,32%{opacity:0}37%,95%{opacity:1}99%,100%{opacity:0}}
-          @keyframes tiqCutA{0%,42%{flex-basis:9%;opacity:.85}47%,100%{flex-basis:0%;opacity:0}}
-          @keyframes tiqCutB{0%,48%{flex-basis:7%;opacity:.85}53%,100%{flex-basis:0%;opacity:0}}
-          @keyframes tiqCutC{0%,54%{flex-basis:10%;opacity:.85}59%,100%{flex-basis:0%;opacity:0}}
-          @keyframes tiqCap{0%,61%{transform:scale(0)}64.5%{transform:scale(1.1)}66%,94%{transform:scale(1)}97%,100%{transform:scale(0)}}
-          @keyframes tiqBadge{0%,69%{opacity:0;transform:translateY(8px)}73%,95%{opacity:1;transform:translateY(0)}98%,100%{opacity:0}}
+          @keyframes tiqCursor{0%{left:88%;top:85%}6%,9%{left:16%;top:22%}18%,21%{left:60%;top:26%}24%,27%{left:52%;top:63%}50%{left:62%;top:48%}74%,86%{left:79%;top:76%}100%{left:88%;top:85%}}
+          @keyframes tiqClick{0%,6%,8%,23.5%,26.5%,82.5%,85.5%,100%{transform:scale(1)}7%,25%,84%{transform:scale(.72)}}
+          @keyframes tiqFile{0%,6%{left:6%;top:16%;opacity:1;transform:scale(1)}18%{left:46%;top:16%;opacity:1;transform:scale(1)}21.5%{left:48%;top:20%;opacity:0;transform:scale(.6)}95%{left:6%;top:16%;opacity:0;transform:scale(1)}100%{left:6%;top:16%;opacity:1}}
+          @keyframes tiqDrop{0%,17%{opacity:1;background:transparent}19%{opacity:1;background:rgba(129,140,248,.14)}23%,96%{opacity:0;background:transparent}100%{opacity:1}}
+          @keyframes tiqPreview{0%,20%{opacity:0}24%,95%{opacity:1}99%,100%{opacity:0}}
+          @keyframes tiqInput{0%,21%{opacity:0;transform:translateY(5px);border-color:rgba(255,255,255,.15)}24%,45.5%{opacity:1;transform:translateY(0);border-color:rgba(255,255,255,.15)}47%{opacity:1;border-color:rgba(129,140,248,.7)}48.5%{opacity:1;border-color:rgba(129,140,248,.7)}52%,100%{opacity:0;transform:translateY(0);border-color:rgba(255,255,255,.15)}}
+          @keyframes tiqType{0%,26%{width:0ch;animation-timing-function:steps(9)}31%{width:9ch;animation-timing-function:steps(1)}33%{width:9ch;animation-timing-function:steps(3)}35%{width:6ch;animation-timing-function:steps(1)}36.5%{width:6ch;animation-timing-function:steps(18)}45.5%,100%{width:24ch}}
+          @keyframes tiqCaret{0%,100%{border-right-color:transparent}50%{border-right-color:rgba(255,255,255,.65)}}
+          @keyframes tiqAnalyze{0%,48%{opacity:0}51.5%,60%{opacity:1}64%,100%{opacity:0}}
+          @keyframes tiqTimeline{0%,49%{opacity:0}54%,95%{opacity:1}99%,100%{opacity:0}}
+          @keyframes tiqCutA{0%,56%{flex-basis:9%;opacity:.85}61%,100%{flex-basis:0%;opacity:0}}
+          @keyframes tiqCutB{0%,62%{flex-basis:7%;opacity:.85}67%,100%{flex-basis:0%;opacity:0}}
+          @keyframes tiqCutC{0%,68%{flex-basis:10%;opacity:.85}73%,100%{flex-basis:0%;opacity:0}}
+          @keyframes tiqCap{0%,72%{transform:scale(0)}75%{transform:scale(1.1)}76.5%,94%{transform:scale(1)}97%,100%{transform:scale(0)}}
+          @keyframes tiqBadge{0%,76%{opacity:0;transform:translateY(8px)}79.5%,95%{opacity:1;transform:translateY(0)}98%,100%{opacity:0}}
           `}</style>
         </div>
       </section>
