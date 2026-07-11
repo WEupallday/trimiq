@@ -720,7 +720,7 @@ function countCuts(segs: [number, number][], duration: number): number {
 export async function cleanVideo(
   input: string,
   output: string,
-  opts: { mode?: EditMode; fileBytes?: number; onStage?: (stage: string) => void; overrides?: EditOverrides; model?: string } = {}
+  opts: { mode?: EditMode; fileBytes?: number; maxDurationSec?: number; onStage?: (stage: string) => void; overrides?: EditOverrides; model?: string } = {}
 ): Promise<CleanResult> {
   const editMode: EditMode = opts.mode || "balanced";
   const settings: Settings = { ...MODE_PRESETS[editMode] };
@@ -757,6 +757,11 @@ export async function cleanVideo(
 
   stage("Analyzing");
   let original = await getDuration(input);
+  if (opts.maxDurationSec && original > opts.maxDurationSec + 1) {
+    throw new Error(
+      `This video is ${Math.ceil(original / 60)} min long - your plan allows up to ${Math.round(opts.maxDurationSec / 60)} min per video. Upgrade for longer videos.`
+    );
+  }
 
   let segs: [number, number][] = [];
   let mode: "smart" | "audio" = "audio";
