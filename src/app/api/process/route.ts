@@ -9,12 +9,17 @@ import { randomUUID } from "node:crypto";
 import { cleanVideo, type EditMode } from "@/lib/clean";
 import { parseInstructions } from "@/lib/instructions";
 import { track } from "@/lib/analytics";
-import { createJob, getJob, listJobs, removeJob, runExclusive } from "@/lib/jobs";
+import {
+  createJob, getJob, removeJob, persistJob, listJobsMerged, ackBatch,
+  pendingUnchargedCount, batchSizeSoFar, runPrioritized,
+} from "@/lib/jobs";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { creditsLeft } from "@/lib/credits";
 import { getStripe, priceIdForPlan, getOrCreateCustomer, syncSubscription, planFromSub } from "@/lib/stripe";
-import { getPlan } from "@/lib/plans";
+import {
+  getPlan, applyPlanGates, priorityFor, maxUploadBytesFor, maxVideoSecondsFor, planSummary,
+} from "@/lib/plans";
 import { requireAdmin, adminData } from "@/lib/admin";
 import { notify, notificationsEnabled } from "@/lib/notify";
 
@@ -360,6 +365,14 @@ export async function POST(req: NextRequest) {
   if (req.nextUrl.searchParams.get("account") === "username") return handleAccountUsername(req);
   if (req.nextUrl.searchParams.get("account") === "tiktok") return handleAccountTiktok(req);
 
+  // Batch-completion notification acknowledged by the client.
+  if (req.nextUrl.searchParams.get("ackBatch")) {
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: "Not logged in." }, { status: 401 });
+    await ackBatch(session.email, String(req.nextUrl.searchParams.get("ackBatch")).slice(0, 64));
+    return NextResponse.json({ ok: true });
+  }
+
   let inPath = "";
   try {
     if (!req.body && !req.nextUrl.searchParams.get("reedit")) {
@@ -374,7 +387,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "This account is suspended. Please contact support." }, { status: 403 });
     }
     const plan = user?.plan ?? "free";
-    if (creditsLeft(plan, user?.editsUsed ?? 0, user?.isCreatorBeta) <= 0) {
+    const planCfg = getPlan(plan);
+    // Credits are only charged on success, but queued/processing jobs are
+    // reserved so a user can\u2019t enqueue more than they have credits for.
+    const pending = await pendingUnchargedCount(session.email);
+    if (creditsLeft(plan, (user?.editsUsed ?? 0) + pending, user?.isCreatorBeta) <= 0) {
       return NextResponse.json(
         { error: "You've used all your free edits. Upgrade to keep editing.", outOfCredits: true },
         { status: 402 }
@@ -387,16 +404,37 @@ export async function POST(req: NextRequest) {
       : LEGACY_MODES[modeParam] || "balanced";
     const originalName = (req.nextUrl.searchParams.get("name") || "video.mp4").slice(0, 200);
     const instructionsText = (req.nextUrl.searchParams.get("instructions") || "").slice(0, 500);
-    const parsed = parseInstructions(instructionsText);
+    const locked: string[] = [];
+    const parsed = planCfg.instructions
+      ? parseInstructions(instructionsText)
+      : { overrides: {} as ReturnType<typeof parseInstructions>["overrides"], applied: [] as string[], unrecognized: [] as string[] };
+    if (!planCfg.instructions && instructionsText) locked.push("Edit Instructions are available on Starter and up.");
 
     // Explicit caption controls (UI toggle) override / complement instructions.
-    if (req.nextUrl.searchParams.get("captions") === "1") {
+    if (planCfg.captions && req.nextUrl.searchParams.get("captions") === "1") {
       parsed.overrides.captions = {
         enabled: true,
         color: (req.nextUrl.searchParams.get("capcolor") || parsed.overrides.captions?.color || "white").slice(0, 16),
         size: ((req.nextUrl.searchParams.get("capsize") || parsed.overrides.captions?.size || "medium").slice(0, 8)) as any,
         position: ((req.nextUrl.searchParams.get("cappos") || parsed.overrides.captions?.position || "bottom").slice(0, 8)) as any,
       };
+    }
+
+    if (!planCfg.captions && req.nextUrl.searchParams.get("captions") === "1")
+      locked.push("AI captions are available on Starter and up.");
+    const gated = applyPlanGates(plan, parsed.overrides);
+    parsed.overrides = gated.overrides;
+    locked.push(...gated.locked);
+
+    const batchId = (req.nextUrl.searchParams.get("batch") || "").slice(0, 64);
+    if (batchId) {
+      const inBatch = await batchSizeSoFar(session.email, batchId);
+      if (inBatch >= planCfg.batchSize) {
+        return NextResponse.json(
+          { error: `Your ${planCfg.name} plan allows up to ${planCfg.batchSize} videos per batch.`, upgrade: true },
+          { status: 403 }
+        );
+      }
     }
 
     // Re-edit: reuse a previous upload instead of receiving a new file.
@@ -425,16 +463,19 @@ export async function POST(req: NextRequest) {
       await unlink(inPath).catch(() => {});
       return NextResponse.json({ error: "That file looks empty or didn't upload fully. Please try again." }, { status: 400 });
     }
-    if (size > MAX_BYTES) {
+    if (size > maxUploadBytesFor(plan)) {
       await unlink(inPath).catch(() => {});
       return NextResponse.json(
-        { error: "That video is too large. Please use a clip under 500 MB (record in 1080p, not 4K)." },
+        { error: `That video is too large for your ${planCfg.name} plan (max ${planCfg.maxUploadMB} MB). Upgrade for bigger uploads.` },
         { status: 413 }
       );
     }
 
-    const paid = (user?.plan ?? "free") !== "free";
-    const job = createJob(session.email, originalName, paid);
+    const paid = plan !== "free";
+    const priority = priorityFor(plan, user?.editsUsed ?? 0);
+    const job = createJob(session.email, originalName, {
+      paid, batchId, priority, mode, instructions: instructionsText || undefined,
+    });
     job.inputPath = inPath;
     job.ownsInput = !reusedInput;
     job.outputPath = outPath;
@@ -448,8 +489,8 @@ export async function POST(req: NextRequest) {
       props: { mode, bytes: size, reedit: !!reusedInput, instructions: !!instructionsText },
     });
 
-    runExclusive(() =>
-      cleanVideo(inPath, outPath, { mode, fileBytes: size, overrides: parsed.overrides, onStage: (s) => (job.stage = s) })
+    runPrioritized(priority, session.email, planCfg.slots, () =>
+      cleanVideo(inPath, outPath, { mode, fileBytes: size, maxDurationSec: maxVideoSecondsFor(plan), overrides: parsed.overrides, onStage: (s) => { job.status = "processing"; job.stage = s; persistJob(job); } })
     )
       .then(async (result) => {
         job.status = "done";
@@ -485,6 +526,7 @@ export async function POST(req: NextRequest) {
         await prisma.user
           .update({ where: { email: session.email }, data: { editsUsed: { increment: 1 } } })
           .catch((e) => console.error("CREDIT UPDATE ERROR:", e));
+        persistJob(job, { creditCharged: true });
         await prisma.processingJob
           .create({ data: { email: session.email, name: originalName, status: "done", durationMs: Date.now() - startedAt, creatorBeta: !!user?.isCreatorBeta } })
           .catch(() => {});
@@ -505,6 +547,8 @@ export async function POST(req: NextRequest) {
         console.error("PROCESS ERROR:", err);
         job.status = "error";
         job.error = friendlyError(err);
+        job.stage = "Failed";
+        persistJob(job); // failed = no credit charged
         await track("edit_failed", {
           email: session.email,
           props: { mode, error: job.error, totalMs: Date.now() - startedAt },
@@ -546,16 +590,35 @@ export async function GET(req: NextRequest) {
   if (params.get("list") === "1") {
     const session = await getSession();
     if (!session) return NextResponse.json({ projects: [] });
-    const projects = listJobs(session.email).map((j) => ({
+    const user = await prisma.user.findUnique({ where: { email: session.email } });
+    const plan = user?.plan ?? "free";
+    const merged = await listJobsMerged(session.email);
+    const projects = merged.map((j) => ({
       id: j.id,
       name: j.originalName,
       createdAt: j.createdAt,
       status: j.status,
       stage: j.stage,
       error: j.error ?? null,
+      batchId: j.batchId || "",
+      downloadable: j.downloadable,
       stats: j.status === "done" ? j.stats : null,
     }));
-    return NextResponse.json({ projects });
+    const unacked = await prisma.queueJob
+      .findMany({
+        where: { email: session.email, acked: false, batchId: { not: "" } },
+        select: { batchId: true },
+        distinct: ["batchId"],
+      })
+      .catch(() => [] as { batchId: string }[]);
+    const left = creditsLeft(plan, user?.editsUsed ?? 0, user?.isCreatorBeta);
+    return NextResponse.json({
+      projects,
+      plan: planSummary(plan),
+      editsUsed: user?.editsUsed ?? 0,
+      creditsLeft: left > 100000 ? null : left, // null = fair-use unlimited
+      unackedBatches: unacked.map((u) => u.batchId),
+    });
   }
 
   const id = params.get("jobId");
