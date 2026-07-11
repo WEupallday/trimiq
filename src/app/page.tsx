@@ -68,7 +68,7 @@ export default async function Home() {
           <span className="bg-gradient-to-r from-indigo-300 via-fuchsia-300 to-indigo-300 bg-clip-text text-transparent"> Ready-to-post out.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-white/60">
-          TrimIQ&apos;s AI removes silence, filler words and bad takes, burns in captions,
+          TrimIQ removes silence, filler words and bad takes, burns in captions,
           adds smart zooms, and hands back a clean, TikTok-ready edit in minutes &mdash;
           one video or a whole batch while you do something else.
         </p>
@@ -148,7 +148,7 @@ export default async function Home() {
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-white/40">
             <span className="flex gap-4">
               <span><span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-indigo-400/70" />kept</span>
-              <span><span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-red-400/40" />removed by AI</span>
+              <span><span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-red-400/40" />removed by TrimIQ</span>
             </span>
             <span className="hidden sm:inline">watch TrimIQ clean a clip &mdash; on a loop</span>
           </div>
@@ -216,7 +216,7 @@ export default async function Home() {
             },
             {
               n: "2",
-              title: "AI cleans the edit",
+              title: "TrimIQ cleans the edit",
               body: "It transcribes every word, removes silence, filler words, false starts and bad takes \u2014 and keeps your best delivery intact.",
               foot: "Captions \u00b7 smart zooms \u00b7 plain-English instructions",
             },
@@ -253,10 +253,10 @@ export default async function Home() {
             { t: "Filler-word removal", b: "Um, uh, like, so \u2014 gone. Add your own words to cut, or keep them." },
             { t: "Bad-take detection", b: "Said it three times? TrimIQ keeps only your final, best take." },
             { t: "Smoother flow", b: "Sentence-aware cuts and pause cleanup that never feel choppy." },
-            { t: "Keeps what matters", b: "Protect your intro or any phrase \u2014 the AI never touches it." },
-            { t: "AI captions", b: "Burned-in, word-accurate. 45+ colors, 7 positions, 3 styles." },
+            { t: "Keeps what matters", b: "Protect your intro or any phrase \u2014 TrimIQ never touches it." },
+            { t: "Auto captions", b: "Burned-in, word-accurate. 45+ colors, 7 positions, 3 styles." },
             { t: "Edit Instructions", b: "Type it in plain English: \u201ccut harder, gold captions top right.\u201d" },
-            { t: "AI zoom effects", b: "The engine picks the punch-in moments \u2014 no timestamps needed." },
+            { t: "Smart zoom effects", b: "TrimIQ picks the punch-in moments \u2014 no timestamps needed." },
             { t: "3 editing styles", b: "Beginner, Balanced or Aggressive pacing \u2014 one click." },
             { t: "Batch upload", b: "Drop in up to 20 videos at once, each with live status." },
             { t: "Background processing", b: "Close the tab. The queue keeps working and notifies you when done." },
