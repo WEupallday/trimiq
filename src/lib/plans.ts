@@ -48,10 +48,10 @@ export const PLANS: Record<PlanId, Plan> = {
     regensPerEdit: 0, bulkDownload: false, llmInstructions: false, allFutureFeatures: false,
     priority: 0, slots: 1, retentionHours: 24,
     features: [
-      "5 AI edits / month",
+      "5 TrimIQ edits / month",
       "Full-quality export - no watermark",
       "All 3 editing styles",
-      "See exactly what the AI improved",
+      "See exactly what TrimIQ improved",
     ],
   },
   starter: {
@@ -62,8 +62,8 @@ export const PLANS: Record<PlanId, Plan> = {
     regensPerEdit: 3, bulkDownload: true, llmInstructions: false, allFutureFeatures: false,
     priority: 1, slots: 1, retentionHours: 72,
     features: [
-      "80 AI edits / month",
-      "AI captions with full styling",
+      "80 TrimIQ edits / month",
+      "Auto captions with full styling",
       "Natural-language Edit Instructions",
       "Batch upload - 5 videos at once",
       "Regenerate without re-uploading",
@@ -78,9 +78,9 @@ export const PLANS: Record<PlanId, Plan> = {
     regensPerEdit: 10, bulkDownload: true, llmInstructions: true, allFutureFeatures: false,
     priority: 2, slots: 2, retentionHours: 72,
     features: [
-      "250 AI edits / month",
+      "250 TrimIQ edits / month",
       "Everything in Starter",
-      "AI zoom effects",
+      "Smart zoom effects",
       "Priority processing",
       "Batch upload - 10 videos at once",
       "2 videos processed at once",
@@ -146,11 +146,11 @@ export function applyPlanGates<T extends { captions?: unknown; zoom?: unknown }>
   const out = { ...overrides };
   if (!p.captions && out.captions) {
     delete out.captions;
-    locked.push("AI captions (Starter and up)");
+    locked.push("Auto captions (Starter and up)");
   }
   if (!p.zooms && out.zoom) {
     delete out.zoom;
-    locked.push("AI zoom effects (Pro and up)");
+    locked.push("Smart zoom effects (Pro and up)");
   }
   return { overrides: out, locked };
 }
