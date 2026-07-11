@@ -451,7 +451,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
       {/* AI Edit Instructions (optional) */}
       <div className="mb-6">
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">
-          AI edit instructions <span className="normal-case text-white/25">(optional)</span>
+          Edit instructions <span className="normal-case text-white/25">(optional)</span>
         </p>
         <textarea
           value={instructions}
@@ -459,7 +459,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
           disabled={busy}
           rows={2}
           maxLength={500}
-          placeholder="Tell the AI how to edit — e.g. Don't cut the intro. Target 30 seconds."
+          placeholder="Tell TrimIQ how to edit — e.g. Don't cut the intro. Target 30 seconds."
           className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white placeholder:text-white/30 focus:border-indigo-400/50 focus:outline-none disabled:opacity-50"
         />
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -473,9 +473,9 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
         </div>
         {/* Explicit caption toggle (also reachable via instructions) */}
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" disabled={busy || !!(plan && !plan.captions)} title={plan && !plan.captions ? "AI captions are available on Starter and up" : undefined} onClick={() => setCaptionsOn((v) => !v)}
+          <button type="button" disabled={busy || !!(plan && !plan.captions)} title={plan && !plan.captions ? "Auto captions are available on Starter and up" : undefined} onClick={() => setCaptionsOn((v) => !v)}
             className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${captionsOn ? "border-indigo-400/50 bg-indigo-500/15 text-white" : "border-white/10 text-white/50 hover:text-white"} disabled:opacity-40`}>
-            {captionsOn ? "\u2713 " : ""}AI captions
+            {captionsOn ? "\u2713 " : ""}Auto captions
           </button>
           {captionsOn && ["white", "yellow", "blue", "green", "pink"].map((c) => (
             <button key={c} type="button" disabled={busy} onClick={() => setCaptionColor(c)} aria-label={`${c} captions`}
@@ -757,7 +757,7 @@ function ReviewPanel({ item, busy, onRegenerate }: {
                   style={{ left: `${(a / s.original) * 100}%`, width: `${Math.max(0.5, ((b - a) / s.original) * 100)}%` }} />
               ))}
             </div>
-            <p className="mt-1 text-center text-[10px] text-white/35">green = kept · red = removed by the AI</p>
+            <p className="mt-1 text-center text-[10px] text-white/35">green = kept · red = removed by TrimIQ</p>
           </div>
         )}
       </div>
@@ -769,9 +769,9 @@ function ReviewPanel({ item, busy, onRegenerate }: {
         <Metric label="Time saved" value={fmtSecs(s.removed)} accent />
         <Metric label="Editing style" value={styleLabel} />
         <Metric label="Captions" value={s.captions ? `${s.captions.color} \u00b7 ${s.captions.size}` : "Off"} sub={s.captions ? `${s.captions.count} lines \u00b7 ${s.captions.position}` : "toggle captions or say: add captions"} dim={!s.captions} />
-        <Metric label="Zoom effects" value={s.zooms ? `${s.zooms.count} ${s.zooms.count === 1 ? "zoom" : "zooms"} · ${s.zooms.intensity}` : "Off"} sub={s.zooms ? "AI-picked moments" : "say: add zooms / make it energetic"} dim={!s.zooms} />
+        <Metric label="Zoom effects" value={s.zooms ? `${s.zooms.count} ${s.zooms.count === 1 ? "zoom" : "zooms"} · ${s.zooms.intensity}` : "Off"} sub={s.zooms ? "TrimIQ-picked moments" : "say: add zooms / make it energetic"} dim={!s.zooms} />
         <Metric label="Processing time" value={fmtSecs(processMs / 1000)} />
-        <Metric label="Engine" value={s.engine === "smart" ? "AI transcript" : "Audio-based"} sub={s.model || undefined} />
+        <Metric label="Engine" value={s.engine === "smart" ? "Transcript-based" : "Audio-based"} sub={s.model || undefined} />
       </div>
 
       {item.applied.length > 0 && (
