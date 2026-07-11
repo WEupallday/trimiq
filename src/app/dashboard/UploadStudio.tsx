@@ -24,6 +24,8 @@ type Stats = {
 };
 
 type Project = {
+  batchId?: string;
+  downloadable?: boolean;
   id: string;
   name: string;
   createdAt: number;
@@ -117,6 +119,10 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
   const [comment, setComment] = useState("");
   const [feedbackSent, setFeedbackSent] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [plan, setPlan] = useState<{ id: string; name: string; batchSize: number; maxUploadMB: number; captions: boolean; instructions: boolean; zooms: boolean; bulkDownload: boolean } | null>(null);
+  const [unacked, setUnacked] = useState<string[]>([]);
+  const [notice, setNotice] = useState("");
+  const batchRef = useRef("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function loadProjects() {
@@ -124,12 +130,23 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
       const res = await fetch("/api/process?list=1");
       const data = await safeJson(res);
       if (Array.isArray(data.projects)) setProjects(data.projects);
+      if (data.plan) setPlan(data.plan);
+      if (Array.isArray(data.unackedBatches)) setUnacked(data.unackedBatches);
+      if (typeof data.creditsLeft === "number") setCreditsLeft(data.creditsLeft);
     } catch {
       /* non-fatal */
     }
   }
   useEffect(() => {
     loadProjects();
+  }, []);
+
+  // The server keeps processing when the tab closes; while it\u2019s open we
+  // poll for statuses, credits and batch-completion notifications.
+  useEffect(() => {
+    const iv = setInterval(loadProjects, 5000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function sendFeedback() {
@@ -157,6 +174,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
     setError(vids.length < all.length ? "Some files were skipped (not videos)." : "");
     setFiles(vids);
     setQueue([]);
+    batchRef.current = `b-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     setRating(0);
     setComment("");
     setFeedbackSent(false);
@@ -178,6 +196,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
       throw new Error(j.error || "Upload failed. Please try again.");
     }
     const start = await safeJson(res);
+    if (Array.isArray(start.locked) && start.locked.length) setNotice(start.locked.join(" "));
     const jobId = start.jobId;
     if (!jobId) throw new Error(start.error || "Upload failed. Please try again.");
     patch(item.id, { status: "processing", jobId, applied: Array.isArray(start.applied) ? start.applied : [] });
@@ -219,13 +238,13 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
     patch(item.id, { status: "uploading", stage: "Uploading", error: "" });
     try {
       if (!item.file) throw new Error("Missing file.");
-      if (item.file.size / 1024 / 1024 > MAX_UPLOAD_MB) {
+      if (item.file.size / 1024 / 1024 > (plan?.maxUploadMB ?? MAX_UPLOAD_MB)) {
         patch(item.id, { status: "error", error: `Too large (max ~${MAX_UPLOAD_MB} MB). Use 1080p, not 4K.` });
         return;
       }
       if (instructions.trim()) track("instructions_used");
       const res = await fetch(
-        `/api/process?mode=${encodeURIComponent(mode)}&name=${encodeURIComponent(item.file.name)}&instructions=${encodeURIComponent(instructions.trim().slice(0, 500))}${captionsOn ? `&captions=1&capcolor=${captionColor}` : ""}`,
+        `/api/process?mode=${encodeURIComponent(mode)}&batch=${encodeURIComponent(batchRef.current)}&name=${encodeURIComponent(item.file.name)}&instructions=${encodeURIComponent(instructions.trim().slice(0, 500))}${captionsOn ? `&captions=1&capcolor=${captionColor}` : ""}`,
         { method: "POST", headers: { "Content-Type": item.file.type || "video/mp4" }, body: item.file }
       );
       await finishJob(item, res);
@@ -260,6 +279,86 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
     loadProjects();
   }
 
+  async function startOne(item: QItem): Promise<string | null> {
+    patch(item.id, { status: "uploading", stage: "Uploading", error: "" });
+    try {
+      if (!item.file) throw new Error("Missing file.");
+      if (item.file.size / 1024 / 1024 > (plan?.maxUploadMB ?? MAX_UPLOAD_MB)) {
+        patch(item.id, { status: "error", error: `Too large (max ${plan?.maxUploadMB ?? MAX_UPLOAD_MB} MB on your plan).` });
+        return null;
+      }
+      if (instructions.trim()) track("instructions_used");
+      const res = await fetch(
+        `/api/process?mode=${encodeURIComponent(mode)}&batch=${encodeURIComponent(batchRef.current)}&name=${encodeURIComponent(item.file.name)}&instructions=${encodeURIComponent(instructions.trim())}${captionsOn ? `&captions=1&capcolor=${captionColor}` : ""}`,
+        { method: "POST", headers: { "Content-Type": item.file.type || "video/mp4" }, body: item.file }
+      );
+      if (!res.ok) {
+        const j = await safeJson(res);
+        if (res.status === 402 || j.outOfCredits) {
+          setCreditsLeft(0);
+          router.refresh();
+        }
+        throw new Error(j.error || "Upload failed. Please try again.");
+      }
+      const start = await safeJson(res);
+      if (!start.jobId) throw new Error(start.error || "Upload failed. Please try again.");
+      if (Array.isArray(start.locked) && start.locked.length) setNotice(start.locked.join(" "));
+      patch(item.id, {
+        status: "processing", stage: "Queued", jobId: start.jobId,
+        applied: Array.isArray(start.applied) ? start.applied : [],
+      });
+      return start.jobId;
+    } catch (e) {
+      patch(item.id, { status: "error", error: friendlyMsg(e) });
+      return null;
+    }
+  }
+
+  async function watchOne(item: QItem, jobId: string) {
+    for (let i = 0; i < 600; i++) {
+      await sleep(2000);
+      let data: any;
+      try {
+        const s = await fetch(`/api/process?jobId=${jobId}`);
+        data = await safeJson(s);
+      } catch {
+        continue;
+      }
+      if (data.stage) patch(item.id, { stage: data.stage });
+      if (data.status === "error") {
+        patch(item.id, { status: "error", error: data.error || "Processing failed." });
+        return;
+      }
+      if (data.status === "done") {
+        try {
+          const blob = await (await fetch(`/api/process?jobId=${jobId}&download=1`)).blob();
+          patch(item.id, { status: "done", stage: "Done", resultUrl: URL.createObjectURL(blob), stats: data.stats, mode: data.mode || "balanced" });
+        } catch {
+          patch(item.id, { status: "done", stage: "Done", stats: data.stats });
+        }
+        if (!unlimited) setCreditsLeft((c) => Math.max(0, c - 1));
+        return;
+      }
+    }
+  }
+
+  async function ackBatchClick(b: string) {
+    setUnacked((u) => u.filter((x) => x !== b));
+    fetch(`/api/process?ackBatch=${encodeURIComponent(b)}`, { method: "POST" }).catch(() => {});
+  }
+
+  async function downloadBatch(items: { id: string; name: string }[]) {
+    for (const p of items) {
+      const a = document.createElement("a");
+      a.href = `/api/process?jobId=${p.id}&download=1`;
+      a.download = `trimiq-${p.name}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      await sleep(600);
+    }
+  }
+
   async function generate() {
     if (!files.length || outOfCredits || busy) return;
     setError("");
@@ -280,16 +379,34 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
     setBusy(true);
     setFeedbackSent(false);
 
-    let localCredits = creditsLeft;
-    for (const item of q) {
-      if (!unlimited && localCredits <= 0) {
-        patch(item.id, { status: "error", error: "Out of edits — upgrade to keep going." });
-        continue;
-      }
-      await processOne(item, () => {
-        localCredits -= 1;
-      });
+    // Batch cap + credit guard client-side (the server enforces both too).
+    const cap = plan?.batchSize ?? 2;
+    let allowed = q.slice(0, cap);
+    for (const item of q.slice(cap)) {
+      patch(item.id, { status: "error", error: `Your plan allows ${cap} videos per batch - upgrade for bigger batches.` });
     }
+    if (!unlimited) {
+      for (const item of allowed.slice(Math.max(0, creditsLeft))) {
+        patch(item.id, { status: "error", error: "Out of edits - upgrade to keep going." });
+      }
+      allowed = allowed.slice(0, Math.max(0, creditsLeft));
+    }
+
+    // Phase 1 - upload everything up-front (2 at a time). Once uploaded the
+    // SERVER queue owns the batch: closing this tab doesn't stop processing.
+    const started: { item: QItem; jobId: string }[] = [];
+    let cursor = 0;
+    const uploadNext = async (): Promise<void> => {
+      const item = allowed[cursor++];
+      if (!item) return;
+      const jobId = await startOne(item);
+      if (jobId) started.push({ item, jobId });
+      return uploadNext();
+    };
+    await Promise.all([uploadNext(), uploadNext()]);
+
+    // Phase 2 - watch progress (cosmetic: processing continues without us).
+    await Promise.all(started.map(({ item, jobId }) => watchOne(item, jobId).catch(() => {})));
     setBusy(false);
     loadProjects();
   }
@@ -356,7 +473,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
         </div>
         {/* Explicit caption toggle (also reachable via instructions) */}
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" disabled={busy} onClick={() => setCaptionsOn((v) => !v)}
+          <button type="button" disabled={busy || !!(plan && !plan.captions)} title={plan && !plan.captions ? "AI captions are available on Starter and up" : undefined} onClick={() => setCaptionsOn((v) => !v)}
             className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${captionsOn ? "border-indigo-400/50 bg-indigo-500/15 text-white" : "border-white/10 text-white/50 hover:text-white"} disabled:opacity-40`}>
             {captionsOn ? "\u2713 " : ""}AI captions
           </button>
@@ -368,6 +485,41 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
           {captionsOn && <span className="text-[10px] text-white/35">bold TikTok-style, burned in</span>}
         </div>
       </div>
+
+      {/* Batch-completion notification */}
+      {unacked
+        .filter((b) => {
+          const items = projects.filter((p) => p.batchId === b);
+          return items.length > 0 && items.every((p) => p.status === "done" || p.status === "error");
+        })
+        .slice(0, 1)
+        .map((b) => {
+          const items = projects.filter((p) => p.batchId === b);
+          const ok = items.filter((p) => p.status === "done");
+          return (
+            <div key={b} className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm">
+              <span className="font-medium text-emerald-200">
+                Your batch is ready - {ok.length} of {items.length} video{items.length === 1 ? "" : "s"} completed.
+              </span>
+              {plan?.bulkDownload && ok.length > 0 && (
+                <button type="button" onClick={() => downloadBatch(ok)} className="rounded-lg bg-emerald-500/20 px-3 py-1 font-medium text-emerald-100 transition hover:bg-emerald-500/30">
+                  Download all
+                </button>
+              )}
+              <button type="button" onClick={() => ackBatchClick(b)} className="ml-auto text-emerald-200/60 transition hover:text-emerald-100">
+                Dismiss
+              </button>
+            </div>
+          );
+        })}
+      {notice && (
+        <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          {notice}
+          <button type="button" onClick={() => setNotice("")} className="ml-3 text-amber-200/60 transition hover:text-amber-100">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Dropzone (multiple) */}
       <div
@@ -504,7 +656,14 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
       {projects.length > 0 && (
         <div className="mt-10">
           <div className="mb-3 flex items-baseline justify-between">
+            <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium uppercase tracking-wide text-white/40">Recent projects</h2>
+            {plan?.bulkDownload && projects.some((p) => p.downloadable) && (
+              <button type="button" onClick={() => downloadBatch(projects.filter((p) => p.downloadable))} className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1 text-xs text-white/70 transition hover:bg-white/10">
+                Download all completed
+              </button>
+            )}
+          </div>
             <span className="text-xs text-white/30">available this session</span>
           </div>
           <div className="space-y-2">
