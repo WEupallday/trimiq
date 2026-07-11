@@ -421,7 +421,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!planCfg.captions && req.nextUrl.searchParams.get("captions") === "1")
-      locked.push("AI captions are available on Starter and up.");
+      locked.push("Auto captions are available on Starter and up.");
     const gated = applyPlanGates(plan, parsed.overrides);
     parsed.overrides = gated.overrides;
     locked.push(...gated.locked);
