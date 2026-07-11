@@ -82,3 +82,28 @@ model BenchmarkRun {
   @@index([clipHash, ts])
   @@index([engineVersion, ts])
 }
+
+// Persistent processing queue: job status/history survive server restarts and
+// browser closes. Media files live on ephemeral disk; jobs whose files were
+// wiped by a deploy are marked failed on boot (no credit charged).
+model QueueJob {
+  id            String    @id
+  email         String
+  batchId       String    @default("")
+  name          String
+  status        String    @default("queued") // queued | processing | done | error
+  stage         String    @default("Queued")
+  error         String?
+  mode          String?
+  paid          Boolean   @default(false)
+  priority      Int       @default(0)
+  stats         Json?
+  applied       Json?
+  acked         Boolean   @default(false) // batch-completion notification acknowledged
+  creditCharged Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  finishedAt    DateTime?
+
+  @@index([email, createdAt])
+  @@index([status])
+}
