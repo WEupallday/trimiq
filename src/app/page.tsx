@@ -58,62 +58,62 @@ export default async function Home() {
       </header>
 
       {/* ---------- HERO ---------- */}
-      <section className="relative z-10 mx-auto max-w-6xl px-6 pb-24 pt-16 text-center md:pt-24">
-        <div className="animate-fade-up">
-          <span className="glass inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs text-white/70">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            Built for TikTok Shop creators
-          </span>
+      <section className="relative z-10 mx-auto max-w-6xl px-6 pb-24 pt-20 text-center">
+        <div className="mx-auto mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 text-xs font-medium text-white/60">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          AI video editing for short-form creators
         </div>
-
-        <h1 className="animate-fade-up mx-auto mt-6 max-w-4xl text-4xl font-bold leading-[1.1] tracking-tight md:text-6xl">
-          Turn raw clips into
-          <br />
-          <span className="text-gradient animate-gradient-pan">publish-ready videos</span>
+        <h1 className="mx-auto max-w-3xl text-4xl font-bold leading-tight tracking-tight md:text-6xl">
+          Raw footage in.
+          <span className="bg-gradient-to-r from-indigo-300 via-fuchsia-300 to-indigo-300 bg-clip-text text-transparent"> Ready-to-post out.</span>
         </h1>
-
-        <p className="animate-fade-up mx-auto mt-6 max-w-2xl text-lg text-white/60">
-          TrimIQ automatically removes dead space, long pauses, and bad takes from
-          your product videos. Upload, click once, download a clean edit — ready to post.
+        <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-white/60">
+          TrimIQ&apos;s AI removes silence, filler words and bad takes, burns in captions,
+          adds smart zooms, and hands back a clean, TikTok-ready edit in minutes &mdash;
+          one video or a whole batch while you do something else.
         </p>
-
-        <div className="animate-fade-up mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+        <div className="mt-9 flex flex-wrap items-center justify-center gap-4">
           <Link
             href={loggedIn ? "/dashboard" : "/signup"}
-            className="group relative w-full rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-7 py-3.5 text-center font-medium shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40 sm:w-auto"
+            className="rounded-xl bg-white px-7 py-3.5 text-base font-semibold text-ink shadow-[0_0_40px_-8px_rgba(129,140,248,0.55)] transition hover:-translate-y-0.5 hover:shadow-[0_0_56px_-8px_rgba(129,140,248,0.8)]"
           >
-            {loggedIn ? "Open the editor" : "Start Editing Free"}
+            {loggedIn ? "Open the editor" : "Start editing free"}
           </Link>
-          <a
+          <Link
             href="#how"
-            className="glass w-full rounded-xl px-7 py-3.5 text-center font-medium text-white/80 transition hover:text-white sm:w-auto"
+            className="rounded-xl border border-white/15 bg-white/[0.04] px-7 py-3.5 text-base font-medium text-white/80 transition hover:bg-white/10"
           >
             See how it works
-          </a>
+          </Link>
         </div>
-        <p className="animate-fade-up mt-4 text-sm text-white/40">
-          No credit card required · Ready to post in seconds
-        </p>
+        <p className="mt-4 text-sm text-white/40">5 free edits every month &middot; full quality &middot; no credit card</p>
 
-        {/* Mock app preview */}
-        <div className="animate-fade-up animate-floaty mt-16">
-          <div className="glass mx-auto max-w-3xl rounded-2xl p-2 shadow-2xl shadow-black/40">
-            <div className="rounded-xl bg-panel p-6">
-              <div className="mb-5 flex items-center gap-1.5">
-                <span className="h-3 w-3 rounded-full bg-red-400/70" />
-                <span className="h-3 w-3 rounded-full bg-yellow-400/70" />
-                <span className="h-3 w-3 rounded-full bg-green-400/70" />
-              </div>
-              <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-white/15 bg-white/[0.02] py-12">
-                <div className="grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-                </div>
-                <p className="text-sm text-white/60">Drop your raw video here</p>
-                <Link href={loggedIn ? "/dashboard" : "/signup"} className="rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2 text-sm font-medium transition hover:opacity-90">
-                  Generate Clean Edit
-                </Link>
-              </div>
+        {/* Before / after strip */}
+        <div className="mx-auto mt-16 max-w-4xl rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-left shadow-2xl backdrop-blur">
+          <div className="flex items-center justify-between text-xs font-medium text-white/40">
+            <span>Your raw clip &middot; 3:12</span>
+            <span className="text-white/25">TrimIQ</span>
+          </div>
+          <div className="mt-3 flex h-6 w-full gap-[3px] overflow-hidden rounded-md">
+            <div className="basis-[9%] rounded-sm bg-indigo-400/70" />
+            <div className="basis-[6%] rounded-sm bg-red-400/30" />
+            <div className="basis-[13%] rounded-sm bg-indigo-400/70" />
+            <div className="basis-[4%] rounded-sm bg-red-400/30" />
+            <div className="basis-[7%] rounded-sm bg-red-400/30" />
+            <div className="basis-[17%] rounded-sm bg-indigo-400/70" />
+            <div className="basis-[5%] rounded-sm bg-red-400/30" />
+            <div className="basis-[12%] rounded-sm bg-indigo-400/70" />
+            <div className="basis-[8%] rounded-sm bg-red-400/30" />
+            <div className="basis-[19%] rounded-sm bg-indigo-400/70" />
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-4 text-xs text-white/50">
+              <span><span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-indigo-400/70" />Kept &mdash; your best takes</span>
+              <span><span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-red-400/30" />Removed &mdash; silence, fillers, retakes</span>
             </div>
+            <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-200">
+              Clean edit &middot; 1:58 &middot; captions on
+            </span>
           </div>
         </div>
       </section>
@@ -121,36 +121,37 @@ export default async function Home() {
       {/* ---------- HOW IT WORKS ---------- */}
       <section id="how" className="relative z-10 mx-auto max-w-6xl px-6 py-24">
         <div className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-bold tracking-tight md:text-4xl">
-            Three steps. Zero editing skills.
-          </h2>
-          <p className="mt-4 text-white/60">
-            What used to take an hour in editing software now takes a few clicks.
-          </p>
+          <h2 className="text-3xl font-bold tracking-tight md:text-4xl">Three steps. That&apos;s the whole workflow.</h2>
+          <p className="mt-4 text-white/60">No timeline, no keyframes, no editing skills.</p>
         </div>
-
         <div className="mt-14 grid gap-6 md:grid-cols-3">
           {[
             {
-              n: "01",
-              t: "Upload your video",
-              d: "Drag in your raw recording — pauses, retakes, and all.",
+              n: "1",
+              title: "Upload your videos",
+              body: "Drag in one clip or a whole batch. TrimIQ queues everything automatically \u2014 you can close the tab and come back.",
+              foot: "Batch upload \u00b7 background processing",
             },
             {
-              n: "02",
-              t: "Click Generate Clean Edit",
-              d: "TrimIQ detects silence and dead space and cuts it automatically.",
+              n: "2",
+              title: "AI cleans the edit",
+              body: "It transcribes every word, removes silence, filler words, false starts and bad takes \u2014 and keeps your best delivery intact.",
+              foot: "Captions \u00b7 smart zooms \u00b7 plain-English instructions",
             },
             {
-              n: "03",
-              t: "Download & post",
-              d: "Get a tight, clean video in original quality, ready for TikTok Shop.",
+              n: "3",
+              title: "Export & post",
+              body: "Review what changed, regenerate with different settings if you like, then download \u2014 full resolution, ready for TikTok.",
+              foot: "No watermark \u00b7 download one or all",
             },
           ].map((s) => (
-            <div key={s.n} className="glass rounded-2xl p-7 transition hover:bg-white/[0.05]">
-              <div className="text-sm font-semibold text-indigo-300">{s.n}</div>
-              <h3 className="mt-3 text-lg font-semibold">{s.t}</h3>
-              <p className="mt-2 text-sm text-white/60">{s.d}</p>
+            <div key={s.n} className="group relative rounded-2xl border border-white/10 bg-white/[0.03] p-8 transition hover:-translate-y-1 hover:border-indigo-400/30 hover:bg-white/[0.05]">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/20 text-lg font-bold text-indigo-200">
+                {s.n}
+              </div>
+              <h3 className="mt-5 text-lg font-semibold">{s.title}</h3>
+              <p className="mt-3 text-sm leading-relaxed text-white/60">{s.body}</p>
+              <p className="mt-4 text-xs font-medium uppercase tracking-wide text-white/30">{s.foot}</p>
             </div>
           ))}
         </div>
@@ -158,22 +159,41 @@ export default async function Home() {
 
       {/* ---------- FEATURES ---------- */}
       <section id="features" className="relative z-10 mx-auto max-w-6xl px-6 py-24">
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+        <div className="mx-auto max-w-2xl text-center">
+          <h2 className="text-3xl font-bold tracking-tight md:text-4xl">Everything TrimIQ does</h2>
+          <p className="mt-4 text-white/60">
+            One upload triggers the full pipeline &mdash; here&apos;s the complete list, no fine print.
+          </p>
+        </div>
+        <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            { t: "Auto pause removal", d: "Long silences and gaps are trimmed automatically." },
-            { t: "Dead space cleanup", d: "Empty moments and false starts get cut." },
-            { t: "Quality preserved", d: "Exports keep your original resolution and audio." },
-            { t: "Fast turnaround", d: "Most clips are ready in under a couple of minutes." },
+            { t: "Silence & dead-space removal", b: "Long pauses and empty air disappear automatically." },
+            { t: "Filler-word removal", b: "Um, uh, like, so \u2014 gone. Add your own words to cut, or keep them." },
+            { t: "Bad-take detection", b: "Said it three times? TrimIQ keeps only your final, best take." },
+            { t: "Smoother flow", b: "Sentence-aware cuts and pause cleanup that never feel choppy." },
+            { t: "Keeps what matters", b: "Protect your intro or any phrase \u2014 the AI never touches it." },
+            { t: "AI captions", b: "Burned-in, word-accurate. 45+ colors, 7 positions, 3 styles." },
+            { t: "Edit Instructions", b: "Type it in plain English: \u201ccut harder, gold captions top right.\u201d" },
+            { t: "AI zoom effects", b: "The engine picks the punch-in moments \u2014 no timestamps needed." },
+            { t: "3 editing styles", b: "Beginner, Balanced or Aggressive pacing \u2014 one click." },
+            { t: "Batch upload", b: "Drop in up to 20 videos at once, each with live status." },
+            { t: "Background processing", b: "Close the tab. The queue keeps working and notifies you when done." },
+            { t: "Queue & notifications", b: "Uploading \u2192 Processing \u2192 Completed, per video, in real time." },
+            { t: "Flexible downloads", b: "Grab videos one at a time or everything completed at once." },
+            { t: "Review page", b: "Before/after player, cut timeline, transcript with removed words." },
+            { t: "Regenerate", b: "New style or instructions without re-uploading the original." },
+            { t: "TikTok-ready export", b: "Full resolution, exact framing, no watermark \u2014 ever." },
           ].map((f) => (
-            <div key={f.t} className="glass rounded-2xl p-6">
-              <div className="mb-4 grid h-10 w-10 place-items-center rounded-lg bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/30">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c7d2fe" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-              </div>
-              <h3 className="font-semibold">{f.t}</h3>
-              <p className="mt-2 text-sm text-white/60">{f.d}</p>
+            <div key={f.t} className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition hover:border-indigo-400/25 hover:bg-white/[0.05]">
+              <div className="mb-3 h-1.5 w-8 rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400" />
+              <h3 className="text-sm font-semibold">{f.t}</h3>
+              <p className="mt-2 text-xs leading-relaxed text-white/55">{f.b}</p>
             </div>
           ))}
         </div>
+        <p className="mx-auto mt-10 max-w-2xl text-center text-sm text-white/40">
+          Credits only count <span className="text-white/70">successful</span> edits &mdash; a failed video never costs anything.
+        </p>
       </section>
 
       {/* ---------- PRICING ---------- */}
