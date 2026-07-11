@@ -88,33 +88,105 @@ export default async function Home() {
         </div>
         <p className="mt-4 text-sm text-white/40">5 free edits every month &middot; full quality &middot; no credit card</p>
 
-        {/* Before / after strip */}
-        <div className="mx-auto mt-16 max-w-4xl rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-left shadow-2xl backdrop-blur">
-          <div className="flex items-center justify-between text-xs font-medium text-white/40">
-            <span>Your raw clip &middot; 3:12</span>
-            <span className="text-white/25">TrimIQ</span>
-          </div>
-          <div className="mt-3 flex h-6 w-full gap-[3px] overflow-hidden rounded-md">
-            <div className="basis-[9%] rounded-sm bg-indigo-400/70" />
-            <div className="basis-[6%] rounded-sm bg-red-400/30" />
-            <div className="basis-[13%] rounded-sm bg-indigo-400/70" />
-            <div className="basis-[4%] rounded-sm bg-red-400/30" />
-            <div className="basis-[7%] rounded-sm bg-red-400/30" />
-            <div className="basis-[17%] rounded-sm bg-indigo-400/70" />
-            <div className="basis-[5%] rounded-sm bg-red-400/30" />
-            <div className="basis-[12%] rounded-sm bg-indigo-400/70" />
-            <div className="basis-[8%] rounded-sm bg-red-400/30" />
-            <div className="basis-[19%] rounded-sm bg-indigo-400/70" />
-          </div>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-4 text-xs text-white/50">
-              <span><span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-indigo-400/70" />Kept &mdash; your best takes</span>
-              <span><span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-red-400/30" />Removed &mdash; silence, fillers, retakes</span>
-            </div>
-            <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-200">
-              Clean edit &middot; 1:58 &middot; captions on
+        {/* Self-playing product demo (pure CSS, no video, no JS) */}
+        <div className="mx-auto mt-16 max-w-4xl rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left shadow-2xl backdrop-blur sm:p-6">
+          <div className="flex items-center justify-between pb-3 text-xs font-medium text-white/40">
+            <span className="flex items-center gap-2.5">
+              <span className="flex gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-white/15" />
+                <span className="h-2 w-2 rounded-full bg-white/15" />
+                <span className="h-2 w-2 rounded-full bg-white/15" />
+              </span>
+              TrimIQ &mdash; Editor
             </span>
+            <span className="text-white/25">auto demo</span>
           </div>
+          <div className="tiq-stage relative w-full overflow-hidden rounded-xl border border-white/[0.06] bg-[#0b0d16]" style={{ aspectRatio: "16 / 9" }}>
+            {/* draggable file chip */}
+            <div className="tiq-file absolute z-10 flex items-center gap-2 rounded-lg border border-white/15 bg-white/[0.07] px-3 py-2 text-[11px] text-white/80">
+              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.5l8 4.5-8 4.5z" fill="currentColor" /></svg>
+              raw-clip.mp4 &middot; 3:12
+            </div>
+            {/* dashed dropzone */}
+            <div className="tiq-drop absolute flex items-center justify-center rounded-xl border-2 border-dashed border-white/15 text-[11px] text-white/30">
+              Drop your video here
+            </div>
+            {/* preview after drop */}
+            <div className="tiq-preview absolute flex items-center justify-center rounded-xl border border-white/10 bg-gradient-to-br from-indigo-500/25 via-fuchsia-500/10 to-transparent">
+              <div className="tiq-cap rounded-md bg-black/75 px-3 py-1.5 text-[12px] font-bold tracking-wide text-white">
+                THIS IS THE GOOD TAKE
+              </div>
+            </div>
+            {/* status line */}
+            <div className="tiq-analyze absolute text-[11px] text-indigo-300/80">Analyzing speech &middot; removing silence, fillers &amp; bad takes&hellip;</div>
+            {/* timeline: kept (indigo) vs cut (red) */}
+            <div className="tiq-timeline absolute flex gap-[3px]">
+              <span className="rounded-sm bg-indigo-400/70" style={{ flexGrow: 2, flexBasis: 0 }} />
+              <span className="tiq-cut tiq-cutA rounded-sm bg-red-400/40" />
+              <span className="rounded-sm bg-indigo-400/70" style={{ flexGrow: 3, flexBasis: 0 }} />
+              <span className="tiq-cut tiq-cutB rounded-sm bg-red-400/40" />
+              <span className="rounded-sm bg-indigo-400/70" style={{ flexGrow: 2, flexBasis: 0 }} />
+              <span className="tiq-cut tiq-cutC rounded-sm bg-red-400/40" />
+              <span className="rounded-sm bg-indigo-400/70" style={{ flexGrow: 4, flexBasis: 0 }} />
+            </div>
+            {/* done badge */}
+            <div className="tiq-badge absolute flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-200">
+              <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l2.5 2.5L10 3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+              Ready to post &middot; 1:58
+            </div>
+            {/* cursor */}
+            <div className="tiq-cursor absolute z-20">
+              <svg className="tiq-click" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 3l14 10-6.2 1 3.4 6.4-2.8 1.4-3.4-6.4L5 20z" fill="#fff" stroke="#0b0d16" strokeWidth="1.4" />
+              </svg>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-white/40">
+            <span className="flex gap-4">
+              <span><span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-indigo-400/70" />kept</span>
+              <span><span className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-red-400/40" />removed by AI</span>
+            </span>
+            <span className="hidden sm:inline">watch TrimIQ clean a clip &mdash; on a loop</span>
+          </div>
+          <style>{`
+          /* Base = finished frame (what reduced-motion users see): clean edit,
+             captions on, ready badge. The 12s loop only runs when motion is OK. */
+          .tiq-file{left:6%;top:16%;opacity:0}
+          .tiq-drop{left:42%;top:8%;width:52%;height:46%;opacity:0}
+          .tiq-preview{left:42%;top:8%;width:52%;height:46%;opacity:1}
+          .tiq-analyze{left:6%;bottom:32%;opacity:0}
+          .tiq-timeline{left:6%;right:6%;bottom:16%;height:9%;opacity:1}
+          .tiq-cut{flex-grow:0;flex-shrink:0;flex-basis:0%;opacity:0}
+          .tiq-cap{transform:scale(1)}
+          .tiq-badge{right:6%;bottom:5%;opacity:1}
+          .tiq-cursor{left:88%;top:85%;opacity:0}
+          @media (prefers-reduced-motion: no-preference){
+            .tiq-cursor{opacity:1;animation:tiqCursor 12s cubic-bezier(.45,.05,.25,1) infinite}
+            .tiq-click{animation:tiqClick 12s linear infinite;transform-origin:25% 15%}
+            .tiq-file{animation:tiqFile 12s cubic-bezier(.45,.05,.25,1) infinite}
+            .tiq-drop{animation:tiqDrop 12s linear infinite}
+            .tiq-preview{animation:tiqPreview 12s linear infinite}
+            .tiq-analyze{animation:tiqAnalyze 12s linear infinite}
+            .tiq-timeline{animation:tiqTimeline 12s linear infinite}
+            .tiq-cutA{animation:tiqCutA 12s ease-in-out infinite}
+            .tiq-cutB{animation:tiqCutB 12s ease-in-out infinite}
+            .tiq-cutC{animation:tiqCutC 12s ease-in-out infinite}
+            .tiq-cap{animation:tiqCap 12s cubic-bezier(.34,1.56,.64,1) infinite}
+            .tiq-badge{animation:tiqBadge 12s ease-out infinite}
+          }
+          @keyframes tiqCursor{0%{left:88%;top:85%}8%,12%{left:16%;top:22%}24%,30%{left:60%;top:26%}55%{left:64%;top:48%}70%,84%{left:79%;top:76%}100%{left:88%;top:85%}}
+          @keyframes tiqClick{0%,7.5%,10.5%,70.5%,73.5%,100%{transform:scale(1)}9%,72%{transform:scale(.72)}}
+          @keyframes tiqFile{0%,9%{left:6%;top:16%;opacity:1;transform:scale(1)}24%{left:46%;top:16%;opacity:1;transform:scale(1)}28%{left:48%;top:20%;opacity:0;transform:scale(.6)}95%{left:6%;top:16%;opacity:0;transform:scale(1)}100%{left:6%;top:16%;opacity:1}}
+          @keyframes tiqDrop{0%,22%{opacity:1;background:transparent}25%{opacity:1;background:rgba(129,140,248,.14)}30%,96%{opacity:0;background:transparent}100%{opacity:1}}
+          @keyframes tiqPreview{0%,28%{opacity:0}34%,95%{opacity:1}99%,100%{opacity:0}}
+          @keyframes tiqAnalyze{0%,31%{opacity:0}35%,46%{opacity:1}50%,100%{opacity:0}}
+          @keyframes tiqTimeline{0%,32%{opacity:0}37%,95%{opacity:1}99%,100%{opacity:0}}
+          @keyframes tiqCutA{0%,42%{flex-basis:9%;opacity:.85}47%,100%{flex-basis:0%;opacity:0}}
+          @keyframes tiqCutB{0%,48%{flex-basis:7%;opacity:.85}53%,100%{flex-basis:0%;opacity:0}}
+          @keyframes tiqCutC{0%,54%{flex-basis:10%;opacity:.85}59%,100%{flex-basis:0%;opacity:0}}
+          @keyframes tiqCap{0%,61%{transform:scale(0)}64.5%{transform:scale(1.1)}66%,94%{transform:scale(1)}97%,100%{transform:scale(0)}}
+          @keyframes tiqBadge{0%,69%{opacity:0;transform:translateY(8px)}73%,95%{opacity:1;transform:translateY(0)}98%,100%{opacity:0}}
+          `}</style>
         </div>
       </section>
 
