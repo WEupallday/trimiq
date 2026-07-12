@@ -36,7 +36,7 @@ export type JobStats = {
   model?: string;
   engineVersion?: string;
   captions?: { color: string; size: string; position: string; style?: string; count: number; coverage: number } | null;
-  zooms?: { count: number; intensity: string; frequency: string } | null;
+  zooms?: { count: number; intensity: string; frequency: string; notes?: string[] } | null;
 };
 
 export type Job = {
