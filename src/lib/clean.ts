@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.3.0";
+export const ENGINE_VERSION = "7.4.0";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -70,6 +70,7 @@ export type ZoomOptions = {
   frequency?: "low" | "medium" | "high";
   importantOnly?: boolean;
   target?: "product" | "speaker";
+  phrases?: string[]; // "zoom in when I say X" - matched against the transcript
 };
 
 export type EditOverrides = {
@@ -124,7 +125,7 @@ export type CleanResult = {
   fillerRemoved: number;
   takesRemoved: number;
   captions: { color: string; size: string; position: string; style: string; count: number; coverage: number } | null;
-  zooms: { count: number; intensity: string; frequency: string } | null;
+  zooms: { count: number; intensity: string; frequency: string; notes?: string[] } | null;
   words: { t: string; s: number; e: number; x: boolean }[];
 };
 
@@ -579,14 +580,51 @@ function planZooms(
   segs: [number, number][],
   planInfo: { allWords: Word[]; mask: boolean[] } | null,
   z: ZoomOptions,
-): { seg: number; scale: number }[] {
-  if (!z.enabled || !segs.length) return [];
+): { picks: { seg: number; scale: number }[]; notes: string[] } {
+  const notes: string[] = [];
+  if (!z.enabled || !segs.length) return { picks: [], notes };
   const scale = ZOOM_SCALE[z.intensity || "medium"] || 1.13;
+  const kept = planInfo ? planInfo.allWords.filter((_, i) => !planInfo.mask[i]) : [];
+  const picks: { seg: number; scale: number }[] = [];
+
+  // ---- Phrase-targeted zooms: "zoom in when I say X" ----------------------
+  // Matched against the word-timed transcript (case-insensitive, punctuation-
+  // insensitive, prefix-fuzzy for single words). Misses degrade to a note.
+  if (z.phrases && z.phrases.length) {
+    if (!kept.length) {
+      notes.push("No speech transcript was available, so phrase zooms were skipped.");
+      return { picks, notes };
+    }
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9']/g, "");
+    const words = kept.map((w) => norm(w.w));
+    for (const phrase of z.phrases) {
+      const target = phrase.toLowerCase().split(/\s+/).map(norm).filter(Boolean);
+      let at = -1;
+      for (let i = 0; target.length && i + target.length <= words.length; i++) {
+        let ok = true;
+        for (let j = 0; j < target.length; j++) {
+          if (words[i + j] !== target[j]) { ok = false; break; }
+        }
+        if (ok) { at = i; break; }
+      }
+      // Fuzzy fallback for single words ("zoom"/"zooms", "amaze"/"amazing").
+      if (at < 0 && target.length === 1)
+        at = words.findIndex((w) => w.length > 2 && target[0].length > 2 && (w.startsWith(target[0]) || target[0].startsWith(w)));
+      if (at < 0) {
+        notes.push(`Couldn't hear "${phrase}" in this video, so that zoom was skipped.`);
+        continue;
+      }
+      const tAt = kept[at].start;
+      const si = segs.findIndex(([a, b]) => tAt >= a - 0.05 && tAt < b);
+      if (si >= 0 && !picks.some((p) => p.seg === si)) picks.push({ seg: si, scale });
+    }
+    // Targeted mode: the user said exactly where to zoom - no auto picks.
+    return { picks, notes };
+  }
+
   const gap = z.importantOnly
     ? Math.max(10, ZOOM_GAP[z.frequency || "medium"] || 8)
     : ZOOM_GAP[z.frequency || "medium"] || 8;
-  const kept = planInfo ? planInfo.allWords.filter((_, i) => !planInfo.mask[i]) : [];
-  const picks: { seg: number; scale: number }[] = [];
   let lastZoomEnd = -1e9; // output-timeline time when the last zoom ended
   let outT = 0;
   for (let i = 0; i < segs.length; i++) {
@@ -620,7 +658,7 @@ function planZooms(
     });
     if (best >= 0 && bestDur >= 1) picks.push({ seg: best, scale });
   }
-  return picks;
+  return { picks, notes };
 }
 
 // Smooth centered push-in for one segment. zoompan state resets per filter
@@ -851,14 +889,16 @@ export async function cleanVideo(
 
   // AI zooms (optional; the engine picks the moments).
   let zoomPlan: { seg: number; scale: number }[] = [];
-  let zoomInfo: { count: number; intensity: string; frequency: string } | null = null;
+  let zoomInfo: { count: number; intensity: string; frequency: string; notes?: string[] } | null = null;
   if (ov.zoom && ov.zoom.enabled) {
-    zoomPlan = planZooms(segs, planInfo, ov.zoom);
-    if (zoomPlan.length)
+    const planned = planZooms(segs, planInfo, ov.zoom);
+    zoomPlan = planned.picks;
+    if (zoomPlan.length || planned.notes.length)
       zoomInfo = {
         count: zoomPlan.length,
         intensity: ov.zoom.intensity || "medium",
         frequency: ov.zoom.frequency || "medium",
+        ...(planned.notes.length ? { notes: planned.notes } : {}),
       };
   }
 
