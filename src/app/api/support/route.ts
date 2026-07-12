@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { notify } from "@/lib/notify";
+import { requireAdmin } from "@/lib/admin";
 import { track } from "@/lib/analytics";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,20 @@ const hits = g.__tiqSupport;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
+
+    // Admin reply: stored on the ticket and delivered as an in-app
+    // notification via the dashboard poller (same pattern as batch alerts).
+    if (body.ticketId && body.reply) {
+      const admin = await requireAdmin();
+      if (!admin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+      const reply = String(body.reply).trim().slice(0, 2000);
+      if (reply.length < 2) return NextResponse.json({ error: "Reply is too short." }, { status: 400 });
+      await prisma.supportTicket.update({
+        where: { id: String(body.ticketId) },
+        data: { reply, repliedAt: new Date(), replySeen: false, status: "replied" },
+      });
+      return NextResponse.json({ ok: true });
+    }
     const message = String(body.message || "").trim().slice(0, 2000);
     if (message.length < 3) {
       return NextResponse.json({ error: "Please write a short message first." }, { status: 400 });
@@ -54,4 +69,29 @@ export async function POST(req: NextRequest) {
     console.error("SUPPORT ERROR:", e);
     return NextResponse.json({ error: "Something went wrong - please try again." }, { status: 500 });
   }
+}
+
+// Admin inbox: recent tickets with the requester’s account info.
+export async function GET() {
+  const admin = await requireAdmin();
+  if (!admin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+  const tickets = await prisma.supportTicket.findMany({ orderBy: { createdAt: "desc" }, take: 100 });
+  const emails = Array.from(new Set(tickets.map((t) => t.email).filter(Boolean))) as string[];
+  const users = emails.length
+    ? await prisma.user.findMany({ where: { email: { in: emails } }, select: { email: true, username: true, plan: true } })
+    : [];
+  const byEmail = new Map(users.map((u) => [u.email, u]));
+  return NextResponse.json({
+    tickets: tickets.map((t) => ({
+      id: t.id,
+      email: t.email,
+      username: t.email ? byEmail.get(t.email)?.username ?? null : null,
+      plan: t.email ? byEmail.get(t.email)?.plan ?? null : null,
+      message: t.message,
+      page: t.page,
+      reply: t.reply,
+      status: t.status,
+      createdAt: t.createdAt,
+    })),
+  });
 }
