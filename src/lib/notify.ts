@@ -14,6 +14,7 @@ export type NotifyEvent =
   | "subscription"
   | "first_video"
   | "job_failed"
+  | "support_ticket"
   | "test";
 
 const EVENT_META: Record<NotifyEvent, { title: string; emoji: string; color: number }> = {
@@ -21,6 +22,7 @@ const EVENT_META: Record<NotifyEvent, { title: string; emoji: string; color: num
   creator_beta: { title: "Creator Beta approved", emoji: "⭐", color: 0xf59e0b },
   subscription: { title: "New paid subscription", emoji: "💳", color: 0x22c55e },
   first_video: { title: "First video processed", emoji: "🎬", color: 0x38bdf8 },
+  support_ticket: { title: "Support message", emoji: "\uD83D\uDCAC", color: 0x22d3ee },
   job_failed: { title: "Video processing failed", emoji: "⚠️", color: 0xef4444 },
   test: { title: "Test notification", emoji: "🔔", color: 0x94a3b8 },
 };
