@@ -187,14 +187,24 @@ export function parseInstructions(text: string): ParsedInstructions {
         applied.push("No zoom effects");
       } else {
         const z = zoom();
+        // "zoom in when I say X" / "zoom in on X" - matched in the transcript.
+        const pm =
+          p.match(/["'“]([^"'”]{1,60})["'”]/) ||
+          p.match(/zoom (?:in )?(?:when (?:i|we) say|on(?: the (?:word|phrase))?|at) ([a-z0-9' ]{2,40})\s*$/);
+        const phrase = pm && pm[1] ? pm[1].trim() : "";
+        if (phrase) {
+          z.phrases = [...(z.phrases || []), phrase];
+          applied.push('Zoom when you say "' + phrase + '"');
+        }
         if (/subtle|slight|gentle|soft|light|small/.test(p)) z.intensity = "subtle";
         else if (/aggressive|strong|hard|dramatic|crash|big|intense/.test(p)) z.intensity = "strong";
         if (/frequent|lots|many|constant|every|tons/.test(p)) z.frequency = "high";
         else if (/occasional|few|rare|sparing|sometimes/.test(p)) z.frequency = "low";
         else if (/aggressive|intense/.test(p) && !z.frequency) z.frequency = "high";
         if (/important|key|crucial|big moments?|highlights?|best moments?/.test(p)) z.importantOnly = true;
-        applied.push(
-          "AI zooms on" +
+        if (!phrase)
+          applied.push(
+            "Zooms on" +
             (z.intensity ? ` (${z.intensity})` : "") +
             (z.frequency === "high" ? ", frequent" : z.frequency === "low" ? ", occasional" : "") +
             (z.importantOnly ? ", key moments only" : "")
