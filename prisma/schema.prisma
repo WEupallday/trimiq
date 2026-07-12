@@ -115,7 +115,10 @@ model SupportTicket {
   email     String?
   message   String
   page      String?
-  status    String   @default("open") // open | closed
+  status    String   @default("open") // open | replied | closed
+  reply     String?
+  repliedAt DateTime?
+  replySeen Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@index([status, createdAt])
