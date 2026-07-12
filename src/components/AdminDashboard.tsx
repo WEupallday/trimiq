@@ -120,6 +120,8 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
       </Section>
 
       {/* Revenue analytics */}
+      <SupportInbox />
+
       <Section title="Revenue analytics">
         <Grid>
           <Stat label="MRR" value={fmtMoney(r.mrr)} accent />
@@ -383,5 +385,90 @@ function MiniChart({
         <span>{pts[pts.length - 1]?.date}</span>
       </div>
     </div>
+  );
+}
+
+// Lightweight support inbox: tickets from the in-app widget, with the
+// requester’s account info. Replies are delivered to the user as an in-app
+// notification (dashboard poller); Discord stays the one-way new-ticket ping.
+function SupportInbox() {
+  const [tickets, setTickets] = useState<
+    { id: string; email: string | null; username: string | null; plan: string | null; message: string; page: string | null; reply: string | null; status: string; createdAt: string }[]
+  >([]);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState("");
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/support", { cache: "no-store" });
+      const j = await res.json();
+      if (Array.isArray(j.tickets)) setTickets(j.tickets);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, [load]);
+  async function send(id: string) {
+    const text = (draft[id] || "").trim();
+    if (text.length < 2 || busy) return;
+    setBusy(id);
+    try {
+      await fetch("/api/support", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ticketId: id, reply: text }),
+      });
+      setDraft((d) => ({ ...d, [id]: "" }));
+      await load();
+    } finally {
+      setBusy("");
+    }
+  }
+  const open = tickets.filter((tk) => !tk.reply).length;
+  return (
+    <Section title={open ? "Support inbox (" + open + " open)" : "Support inbox"}>
+      {tickets.length === 0 && <p className="text-sm text-white/40">No support messages yet.</p>}
+      <div className="space-y-3">
+        {tickets.map((tk) => (
+          <div key={tk.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-white/40">
+              <span className="font-medium text-white/70">{tk.username || tk.email || "anonymous visitor"}</span>
+              {tk.email && tk.username && <span>{tk.email}</span>}
+              <span className="rounded-full border border-white/10 px-2 py-0.5">{tk.plan || "no account"}</span>
+              <span>{fmtDate(tk.createdAt)}</span>
+              {tk.page && <span className="text-white/25">{tk.page}</span>}
+            </div>
+            <p className="mt-2 text-sm text-white/80">{tk.message}</p>
+            {tk.reply ? (
+              <p className="mt-2 rounded-lg bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">Replied: {tk.reply}</p>
+            ) : (
+              <div className="mt-3">
+                <div className="flex gap-2">
+                  <input
+                    value={draft[tk.id] || ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, [tk.id]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === "Enter") send(tk.id); }}
+                    placeholder="Write a reply - delivered in-app"
+                    className="flex-1 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-indigo-400/50"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy === tk.id}
+                    onClick={() => send(tk.id)}
+                    className="rounded-lg bg-indigo-500/80 px-3 py-2 text-xs font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
+                  >
+                    {busy === tk.id ? "Sending" : "Reply"}
+                  </button>
+                </div>
+                {!tk.email && (
+                  <p className="mt-1 text-[11px] text-white/30">Anonymous visitor - the reply is stored but can’t be delivered in-app.</p>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Section>
   );
 }
