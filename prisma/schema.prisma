@@ -107,3 +107,16 @@ model QueueJob {
   @@index([email, createdAt])
   @@index([status])
 }
+
+// In-app support: messages that the rule-based helper couldn’t answer.
+// Stored here and pushed to Discord via DISCORD_WEBHOOK_URL (notify.ts).
+model SupportTicket {
+  id        String   @id @default(cuid())
+  email     String?
+  message   String
+  page      String?
+  status    String   @default("open") // open | closed
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+}
