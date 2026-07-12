@@ -20,7 +20,7 @@ type Stats = {
   model?: string;
   engineVersion?: string;
   captions?: { color: string; size: string; position: string; count: number; coverage: number } | null;
-  zooms?: { count: number; intensity: string; frequency: string } | null;
+  zooms?: { count: number; intensity: string; frequency: string; notes?: string[] } | null;
 };
 
 type Project = {
@@ -769,7 +769,7 @@ function ReviewPanel({ item, busy, onRegenerate }: {
         <Metric label="Time saved" value={fmtSecs(s.removed)} accent />
         <Metric label="Editing style" value={styleLabel} />
         <Metric label="Captions" value={s.captions ? `${s.captions.color} \u00b7 ${s.captions.size}` : "Off"} sub={s.captions ? `${s.captions.count} lines \u00b7 ${s.captions.position}` : "toggle captions or say: add captions"} dim={!s.captions} />
-        <Metric label="Zoom effects" value={s.zooms ? `${s.zooms.count} ${s.zooms.count === 1 ? "zoom" : "zooms"} · ${s.zooms.intensity}` : "Off"} sub={s.zooms ? "TrimIQ-picked moments" : "say: add zooms / make it energetic"} dim={!s.zooms} />
+        <Metric label="Zoom effects" value={s.zooms ? `${s.zooms.count} ${s.zooms.count === 1 ? "zoom" : "zooms"} · ${s.zooms.intensity}` : "Off"} sub={s.zooms ? (s.zooms.notes && s.zooms.notes.length ? s.zooms.notes.join(" ") : "TrimIQ-picked moments") : "say: add zooms / make it energetic"} dim={!s.zooms} />
         <Metric label="Processing time" value={fmtSecs(processMs / 1000)} />
         <Metric label="Engine" value={s.engine === "smart" ? "Transcript-based" : "Audio-based"} sub={s.model || undefined} />
       </div>
