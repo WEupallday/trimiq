@@ -365,6 +365,19 @@ export async function POST(req: NextRequest) {
   if (req.nextUrl.searchParams.get("account") === "username") return handleAccountUsername(req);
   if (req.nextUrl.searchParams.get("account") === "tiktok") return handleAccountTiktok(req);
 
+  // Support reply seen by the user.
+  if (req.nextUrl.searchParams.get("ackReply")) {
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: "Not logged in." }, { status: 401 });
+    await prisma.supportTicket
+      .updateMany({
+        where: { id: String(req.nextUrl.searchParams.get("ackReply")).slice(0, 64), email: session.email },
+        data: { replySeen: true },
+      })
+      .catch(() => {});
+    return NextResponse.json({ ok: true });
+  }
+
   // Batch-completion notification acknowledged by the client.
   if (req.nextUrl.searchParams.get("ackBatch")) {
     const session = await getSession();
@@ -611,6 +624,13 @@ export async function GET(req: NextRequest) {
         distinct: ["batchId"],
       })
       .catch(() => [] as { batchId: string }[]);
+    const replies = await prisma.supportTicket
+      .findMany({
+        where: { email: session.email, reply: { not: null }, replySeen: false },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      })
+      .catch(() => [] as never[]);
     const left = creditsLeft(plan, user?.editsUsed ?? 0, user?.isCreatorBeta);
     return NextResponse.json({
       projects,
@@ -618,6 +638,11 @@ export async function GET(req: NextRequest) {
       editsUsed: user?.editsUsed ?? 0,
       creditsLeft: left > 100000 ? null : left, // null = fair-use unlimited
       unackedBatches: unacked.map((u) => u.batchId),
+      supportReplies: (replies as Array<{ id: string; message: string; reply: string | null }>).map((r) => ({
+        id: r.id,
+        message: r.message.slice(0, 140),
+        reply: r.reply,
+      })),
     });
   }
 
