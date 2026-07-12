@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import SupportWidget from "@/components/SupportWidget";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -17,6 +18,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} font-sans bg-ink text-white antialiased`}>
         {children}
+        <SupportWidget />
       </body>
     </html>
   );
