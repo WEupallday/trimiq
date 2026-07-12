@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import Link from "next/link";
 import SupportWidget from "@/components/SupportWidget";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -18,6 +19,13 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} font-sans bg-ink text-white antialiased`}>
         {children}
+        <footer className="relative z-10 border-t border-white/10 px-6 py-6 text-center text-xs text-white/35">
+          <span>© {new Date().getFullYear()} TrimIQ</span>
+          <span className="mx-2 text-white/20">·</span>
+          <Link href="/terms" className="transition hover:text-white/70">Terms of Service</Link>
+          <span className="mx-2 text-white/20">·</span>
+          <Link href="/privacy" className="transition hover:text-white/70">Privacy Policy</Link>
+        </footer>
         <SupportWidget />
       </body>
     </html>
