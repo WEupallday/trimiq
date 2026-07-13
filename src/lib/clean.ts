@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.4.0";
+export const ENGINE_VERSION = "7.4.1";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -89,9 +89,9 @@ export type EditOverrides = {
 
 export const MODE_PRESETS: Record<EditMode, Settings> = {
   beginner: {
-    silenceThresholdDb: "auto", minPause: 0.7, leadIn: 0.14, trailOut: 0.22,
-    naturalPause: 0.55, wordPad: 0.12, minClipLength: 0.25, fade: 0.05,
-    sentenceGap: 0.8, removeFiller: true, removeSoftFiller: false,
+    silenceThresholdDb: "auto", minPause: 0.9, leadIn: 0.14, trailOut: 0.22,
+    naturalPause: 0.7, wordPad: 0.12, minClipLength: 0.25, fade: 0.05,
+    sentenceGap: 1.0, removeFiller: true, removeSoftFiller: false,
     nearPrefixThresh: 0.7, dropRatio: 0.55,
   },
   balanced: {
@@ -101,9 +101,9 @@ export const MODE_PRESETS: Record<EditMode, Settings> = {
     nearPrefixThresh: 0.6, dropRatio: 0.85,
   },
   aggressive: {
-    silenceThresholdDb: "auto", minPause: 0.25, leadIn: 0.08, trailOut: 0.11,
-    naturalPause: 0.18, wordPad: 0.07, minClipLength: 0.18, fade: 0.04,
-    sentenceGap: 0.45, removeFiller: true, removeSoftFiller: true,
+    silenceThresholdDb: "auto", minPause: 0.15, leadIn: 0.05, trailOut: 0.08,
+    naturalPause: 0.10, wordPad: 0.05, minClipLength: 0.15, fade: 0.04,
+    sentenceGap: 0.30, removeFiller: true, removeSoftFiller: true,
     nearPrefixThresh: 0.55, dropRatio: 0.95,
   },
 };
