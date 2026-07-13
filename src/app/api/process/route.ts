@@ -22,6 +22,7 @@ import {
 } from "@/lib/plans";
 import { requireAdmin, adminData } from "@/lib/admin";
 import { notify, notificationsEnabled } from "@/lib/notify";
+import { rateLimit, clientIp } from "@/lib/ratelimit";
 
 // ----- Admin: dashboard data + actions -------------------------------------
 async function handleAdminData() {
@@ -62,6 +63,42 @@ async function handleAdminAction(req: NextRequest) {
       await prisma.user.update({ where: { id: userId }, data: { isTestAccount: false } });
     } else if (action === "delete") {
       await prisma.user.delete({ where: { id: userId } });
+    } else if (action === "billingInspect") {
+      // Read-only: the user's Stripe invoices / subscriptions / upcoming
+      // charges, plus whether the configured key is test or live mode.
+      const stripe = getStripe();
+      if (!stripe) return NextResponse.json({ error: "Billing isn't set up." }, { status: 503 });
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      const key = process.env.STRIPE_SECRET_KEY || "";
+      const mode = key.startsWith("sk_live") ? "live" : key.startsWith("sk_test") ? "test" : "unknown";
+      if (!user?.stripeCustomerId) {
+        return NextResponse.json({ mode, invoices: [], subscriptions: [], upcoming: null, note: "No Stripe customer for this user." });
+      }
+      const inv = await stripe.invoices.list({ customer: user.stripeCustomerId, limit: 20 });
+      const subs = await stripe.subscriptions.list({ customer: user.stripeCustomerId, status: "all", limit: 10 });
+      let upcoming: any = null;
+      try {
+        upcoming = await (stripe.invoices as any).retrieveUpcoming({ customer: user.stripeCustomerId });
+      } catch { /* no upcoming invoice */ }
+      return NextResponse.json({
+        mode,
+        invoices: inv.data.map((i: any) => ({
+          status: i.status,
+          total: i.total / 100,
+          amountPaid: i.amount_paid / 100,
+          created: new Date(i.created * 1000).toISOString(),
+          lines: (i.lines?.data || []).slice(0, 6).map((l: any) => l.description),
+        })),
+        upcoming: upcoming
+          ? { total: upcoming.total / 100, lines: (upcoming.lines?.data || []).slice(0, 8).map((l: any) => l.description) }
+          : null,
+        subscriptions: subs.data.map((s: any) => ({
+          status: s.status,
+          cancelAtPeriodEnd: !!s.cancel_at_period_end,
+          priceId: s.items?.data?.[0]?.price?.id || null,
+          periodEnd: s.current_period_end ? new Date(s.current_period_end * 1000).toISOString() : null,
+        })),
+      });
     } else if (action === "migratePricing") {
       // Move an existing subscriber onto the current Stripe Price for their tier.
       // Switches the price on the existing subscription (never recreates it) with
@@ -337,6 +374,9 @@ async function handleFeedback(req: NextRequest) {
       return NextResponse.json({ error: "Rating must be between 1 and 5." }, { status: 400 });
     }
     const session = await getSession();
+    if (!rateLimit("feedback:" + (session?.email || clientIp(req)), 5, 10 * 60 * 1000)) {
+      return NextResponse.json({ error: "Too many submissions - please wait a few minutes." }, { status: 429 });
+    }
     await prisma.feedback.create({
       data: {
         email: session?.email ?? null,
@@ -651,9 +691,9 @@ export async function GET(req: NextRequest) {
   const job = getJob(id);
   if (!job) return NextResponse.json({ error: "That project is no longer available." }, { status: 404 });
 
-  // Ownership check.
+  // Ownership check: a valid session matching the job owner is required.
   const session = await getSession();
-  if (job.email && session?.email !== job.email) {
+  if (!session || session.email !== job.email) {
     return NextResponse.json({ error: "Not allowed." }, { status: 403 });
   }
 
