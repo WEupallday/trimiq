@@ -121,6 +121,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
   const [projects, setProjects] = useState<Project[]>([]);
   const [plan, setPlan] = useState<{ id: string; name: string; batchSize: number; maxUploadMB: number; captions: boolean; instructions: boolean; zooms: boolean; bulkDownload: boolean } | null>(null);
   const [unacked, setUnacked] = useState<string[]>([]);
+  const [supportReplies, setSupportReplies] = useState<{ id: string; message: string; reply: string }[]>([]);
   const [notice, setNotice] = useState("");
   const batchRef = useRef("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -132,6 +133,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
       if (Array.isArray(data.projects)) setProjects(data.projects);
       if (data.plan) setPlan(data.plan);
       if (Array.isArray(data.unackedBatches)) setUnacked(data.unackedBatches);
+      if (Array.isArray(data.supportReplies)) setSupportReplies(data.supportReplies);
       if (typeof data.creditsLeft === "number") setCreditsLeft(data.creditsLeft);
     } catch {
       /* non-fatal */
@@ -342,6 +344,11 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
     }
   }
 
+  async function ackReply(id: string) {
+    setSupportReplies((rs) => rs.filter((r) => r.id !== id));
+    fetch(`/api/process?ackReply=${encodeURIComponent(id)}`, { method: "POST" }).catch(() => {});
+  }
+
   async function ackBatchClick(b: string) {
     setUnacked((u) => u.filter((x) => x !== b));
     fetch(`/api/process?ackBatch=${encodeURIComponent(b)}`, { method: "POST" }).catch(() => {});
@@ -485,6 +492,18 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
           {captionsOn && <span className="text-[10px] text-white/35">bold TikTok-style, burned in</span>}
         </div>
       </div>
+
+      {/* Support reply notification */}
+      {supportReplies.map((r) => (
+        <div key={r.id} className="mb-4 rounded-xl border border-indigo-400/30 bg-indigo-500/10 px-4 py-3 text-sm">
+          <p className="font-medium text-indigo-200">Reply from TrimIQ support</p>
+          <p className="mt-1 text-white/75">{r.reply}</p>
+          <p className="mt-1 text-[11px] text-white/35">Re: {r.message}</p>
+          <button type="button" onClick={() => ackReply(r.id)} className="mt-2 text-xs text-indigo-200/60 transition hover:text-indigo-100">
+            Dismiss
+          </button>
+        </div>
+      ))}
 
       {/* Batch-completion notification */}
       {unacked
