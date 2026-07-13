@@ -67,7 +67,7 @@ export default function AccountSettings({
   }
 
   return (
-    <div className="glass mb-8 rounded-2xl p-5">
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between text-left">
         <div>
           <p className="text-xs uppercase tracking-wide text-white/40">Account</p>
