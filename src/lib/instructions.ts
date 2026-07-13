@@ -187,11 +187,19 @@ export function parseInstructions(text: string): ParsedInstructions {
         applied.push("No zoom effects");
       } else {
         const z = zoom();
-        // "zoom in when I say X" / "zoom in on X" - matched in the transcript.
+        // "zoom in when I say X" / "zoom on the part where X" / "zoom when I
+        // show X" - matched against the transcript. Semantic descriptors like
+        // "the key moments" are NOT literal spoken phrases: they mean smart
+        // engine-picked zooms (importantOnly), never a transcript search.
         const pm =
           p.match(/["'“]([^"'”]{1,60})["'”]/) ||
-          p.match(/zoom (?:in )?(?:when (?:i|we) say|on(?: the (?:word|phrase))?|at) ([a-z0-9' ]{2,40})\s*$/);
-        const phrase = pm && pm[1] ? pm[1].trim() : "";
+          p.match(/zoom (?:in |out )?(?:when (?:i|we) (?:say|mention|talk about|show(?: off)?|hold up|demo(?:nstrate)?|point (?:to|at)|introduce)|on the part where|at the part where|when (?:i|we) get to) ([a-z0-9' ]{2,40})\s*$/) ||
+          p.match(/zoom (?:in )?(?:on(?: the (?:word|phrase))?|at) ([a-z0-9' ]{2,40})\s*$/);
+        const rawPhrase = pm && pm[1] ? pm[1].trim() : "";
+        const descriptor = /^(?:the |my |our )?(?:key|important|best|big|main|good|crucial) (?:moments?|parts?|points?|bits?|sections?)$|^(?:the )?(?:highlights?|hook|climax|important (?:parts?|moments?|stuff))$/;
+        const phrase = rawPhrase && !descriptor.test(rawPhrase) ? rawPhrase : "";
+        if (rawPhrase && !phrase) z.importantOnly = true;
+        if (/when (?:i|we) (?:show|hold up|demo|demonstrate|point|introduce)/.test(p)) z.target = z.target || "product";
         if (phrase) {
           z.phrases = [...(z.phrases || []), phrase];
           applied.push('Zoom when you say "' + phrase + '"');
