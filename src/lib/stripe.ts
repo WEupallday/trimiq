@@ -118,6 +118,21 @@ export async function syncSubscription(sub: any, resetEdits: boolean) {
   const planId: string = (active ? planFromSub(sub) : null) || "free";
   const email: string | undefined = sub?.metadata?.email;
   const customerId: string = typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
+
+  // Comp accounts (founder/admin, listed in ADMIN_EMAILS) are never managed
+  // by Stripe: their plan is set manually and subscription events must not
+  // overwrite it (e.g. a cancellation must not downgrade the founder).
+  const compEmails = (process.env.ADMIN_EMAILS || "")
+    .toLowerCase()
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  let targetEmail = (email || "").toLowerCase();
+  if (!targetEmail && customerId) {
+    const u = await prisma.user.findFirst({ where: { stripeCustomerId: customerId }, select: { email: true } });
+    targetEmail = (u?.email || "").toLowerCase();
+  }
+  if (targetEmail && compEmails.includes(targetEmail)) return;
   const periodEnd = sub?.current_period_end ? new Date(sub.current_period_end * 1000) : null;
 
   const data: any = {
