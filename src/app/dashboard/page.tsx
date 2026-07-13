@@ -33,14 +33,19 @@ export default async function DashboardPage() {
       <div className="pointer-events-none absolute -top-40 left-1/2 -translate-x-1/2 h-[420px] w-[420px] rounded-full bg-indigo-600/15 blur-[120px]" />
 
       {/* Top bar */}
-      <header className="relative z-10 border-b border-white/10">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-ink/80 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2 font-semibold">
             <Logo size={32} />
             TrimIQ
           </Link>
           <div className="flex items-center gap-3">
-            <span className="hidden text-sm text-white/50 sm:inline">{displayName}</span>
+            <span className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] py-1 pl-1 pr-3 text-xs sm:flex">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-[11px] font-bold text-white">
+                {(displayName || "U").slice(0, 1).toUpperCase()}
+              </span>
+              <span className="font-medium text-white/80">{displayName}</span>
+            </span>
             {creatorBeta && (
               <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200">
                 Creator Beta
