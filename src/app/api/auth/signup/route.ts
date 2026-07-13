@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { hashPassword, createSessionToken, SESSION_COOKIE } from "@/lib/auth";
 import { notify } from "@/lib/notify";
+import { rateLimit, clientIp } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,13 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Choose a username of 3–20 letters, numbers, or underscores." },
         { status: 400 }
+      );
+    }
+
+    if (!rateLimit("signup:" + clientIp(req), 5, 60 * 60 * 1000)) {
+      return NextResponse.json(
+        { error: "Too many signups from this network - please try again later." },
+        { status: 429 }
       );
     }
 
@@ -55,7 +63,6 @@ export async function POST(req: Request) {
     return res;
   } catch (e) {
     console.error("SIGNUP ERROR:", e);
-    const msg = e instanceof Error ? e.message : "Something went wrong. Please try again.";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }
