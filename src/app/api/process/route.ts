@@ -546,6 +546,9 @@ export async function POST(req: NextRequest) {
       cleanVideo(inPath, outPath, { mode, fileBytes: size, maxDurationSec: maxVideoSecondsFor(plan), overrides: parsed.overrides, onStage: (s) => { job.status = "processing"; job.stage = s; persistJob(job); } })
     )
       .then(async (result) => {
+        // If the user deleted this job while it was rendering, discard the
+        // result: no record, no credit charged.
+        if (!getJob(job.id)) return;
         job.status = "done";
         job.stats = {
           original: result.original,
@@ -598,6 +601,8 @@ export async function POST(req: NextRequest) {
       })
       .catch(async (err) => {
         console.error("PROCESS ERROR:", err);
+        // Deleted while queued/rendering - nothing to record.
+        if (!getJob(job.id)) return;
         job.status = "error";
         job.error = friendlyError(err);
         job.stage = "Failed";
@@ -741,13 +746,10 @@ export async function DELETE(req: NextRequest) {
   if (job && job.email !== session.email) {
     return NextResponse.json({ error: "Not allowed." }, { status: 403 });
   }
-  // Don’t yank files out from under an active render.
-  if (job && (job.status === "processing" || job.status === "queued")) {
-    return NextResponse.json(
-      { error: "That video is still processing - try again when it finishes." },
-      { status: 409 }
-    );
-  }
+  // Every state is deletable - done, failed, queued, even mid-render (users
+  // must be able to clear stuck or failed entries). The background handlers
+  // above check the job still exists before persisting or charging, so a
+  // deleted job can never resurrect in the list or cost a credit.
   removeJob(id); // frees the media files on disk + hot state
   // Also remove the persistent record (ownership enforced in the query) so
   // the dashboard poller can’t resurrect the project after a delete.
