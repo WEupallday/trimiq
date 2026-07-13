@@ -88,7 +88,40 @@ export async function adminData() {
     .reduce((sum, u) => sum + ((prices as any)[u.plan]?.amount || 0), 0);
   const mrr = revenue.available ? revenue.mrr : dbMrr;
 
+  // ---- Launch metrics (self-hosted Event table + job history) ----
+  const week = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+  const [evUploads, evUploads7, evCompleted, evCompleted7, evFailed, evFailed7, recentCompleted] = await Promise.all([
+    prisma.event.count({ where: { name: "upload_started" } }),
+    prisma.event.count({ where: { name: "upload_started", ts: { gte: week } } }),
+    prisma.event.count({ where: { name: "edit_completed" } }),
+    prisma.event.count({ where: { name: "edit_completed", ts: { gte: week } } }),
+    prisma.event.count({ where: { name: "edit_failed" } }),
+    prisma.event.count({ where: { name: "edit_failed", ts: { gte: week } } }),
+    prisma.event.findMany({ where: { name: "edit_completed" }, orderBy: { ts: "desc" }, take: 300, select: { props: true } }),
+  ]);
+  const times = recentCompleted
+    .map((e) => Number((e.props as Record<string, unknown> | null)?.totalMs))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const avgProcessSec = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length / 100) / 10 : null;
+  const signups7 = realUsers.filter((u) => u.createdAt >= week).length;
+  const payingCount = realUsers.filter((u) => u.plan !== "free").length;
+  const analytics = {
+    uploads: evUploads,
+    uploads7d: evUploads7,
+    completed: evCompleted,
+    completed7d: evCompleted7,
+    failed: evFailed,
+    failed7d: evFailed7,
+    errorRatePct: evCompleted + evFailed ? Math.round((evFailed / (evCompleted + evFailed)) * 1000) / 10 : 0,
+    avgProcessSec,
+    signups7d: signups7,
+    freeUsers: realUsers.length - payingCount,
+    paidUsers: payingCount,
+    conversionPct: realUsers.length ? Math.round((payingCount / realUsers.length) * 1000) / 10 : 0,
+  };
+
   return {
+    analytics,
     users: users.map((u) => {
       const limit = effectiveEditLimit(u.plan, u.isCreatorBeta);
       return {
