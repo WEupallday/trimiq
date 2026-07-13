@@ -87,6 +87,25 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
     setBusyId("");
   }
 
+  async function clearErrors() {
+    if (!confirm("Clear the recent-errors log? Only the log entries are deleted.")) return;
+    await fetch("/api/process?admin=action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "clearRecentErrors" }),
+    }).catch(() => {});
+    await refresh();
+  }
+
+  async function deleteError(errorId: string) {
+    setData((d: any) => ({ ...d, recentErrors: (d.recentErrors || []).filter((x: any) => x.id !== errorId) }));
+    await fetch("/api/process?admin=action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "deleteError", errorId }),
+    }).catch(() => {});
+  }
+
   const users = (data.users as any[]).filter((u) => {
     if (cbOnly && !u.isCreatorBeta) return false;
     const t = q.trim().toLowerCase();
@@ -194,13 +213,24 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
         </div>
         {data.recentErrors.length > 0 && (
           <div className="mt-4">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">Recent errors</p>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-medium uppercase tracking-wide text-white/40">Recent errors</p>
+              <Btn danger onClick={clearErrors}>Clear all</Btn>
+            </div>
             <div className="space-y-2">
               {data.recentErrors.map((e: any, i: number) => (
-                <div key={i} className="glass rounded-lg p-3 text-xs">
+                <div key={e.id || i} className="glass rounded-lg p-3 text-xs">
                   <div className="flex justify-between gap-3">
                     <span className="truncate text-white/80">{e.name} · {e.email}</span>
-                    <span className="shrink-0 text-white/30">{fmtDate(e.createdAt)}</span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className="text-white/30">{fmtDate(e.createdAt)}</span>
+                      {e.id && (
+                        <button type="button" onClick={() => deleteError(e.id)} aria-label="Delete error entry"
+                          className="rounded px-1 text-white/30 transition hover:text-red-300">
+                          ✕
+                        </button>
+                      )}
+                    </span>
                   </div>
                   <p className="mt-1 text-red-300">{e.error}</p>
                 </div>
