@@ -16,9 +16,9 @@ export function rateLimit(key: string, max: number, windowMs: number): boolean {
   buckets.set(key, arr);
   // Opportunistic cleanup so the map never grows unbounded.
   if (buckets.size > 10000) {
-    for (const [k, v] of buckets) {
+    buckets.forEach((v, k) => {
       if (!v.some((t) => now - t < windowMs)) buckets.delete(k);
-    }
+    });
   }
   return true;
 }
