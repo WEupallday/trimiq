@@ -421,10 +421,22 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
   async function deleteProject(id: string) {
     setProjects((p) => p.filter((x) => x.id !== id));
     try {
-      await fetch(`/api/process?jobId=${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/process?jobId=${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = await safeJson(res);
+        setNotice(j.error || "Couldn't delete that project - please try again.");
+        loadProjects();
+      }
     } catch {
       loadProjects();
     }
+  }
+
+  // Remove a failed upload/edit card from the current batch view (and its
+  // server record, if one was created).
+  function dismissFailed(item: QItem) {
+    setQueue((qs) => qs.filter((x) => x.id !== item.id));
+    if (item.jobId) fetch(`/api/process?jobId=${item.jobId}`, { method: "DELETE" }).catch(() => {});
   }
 
   const doneItems = queue.filter((q) => q.status === "done");
@@ -616,7 +628,15 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
                     <div className={`h-full rounded-full transition-all duration-700 ${item.status === "done" ? "bg-emerald-400" : "bg-gradient-to-r from-indigo-500 to-fuchsia-500"}`} style={{ width: `${pct}%` }} />
                   </div>
                 )}
-                {item.status === "error" && <p className="mt-2 text-xs text-red-300">{item.error}</p>}
+                {item.status === "error" && (
+                  <div className="mt-2 flex items-start justify-between gap-3">
+                    <p className="text-xs text-red-300">{item.error}</p>
+                    <button type="button" onClick={() => dismissFailed(item)}
+                      className="shrink-0 rounded-lg border border-white/10 px-2.5 py-1 text-xs text-white/50 transition hover:border-red-400/40 hover:text-red-300">
+                      Delete
+                    </button>
+                  </div>
+                )}
                 {item.status === "done" && item.stats && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-white/50">
                     <span>{item.stats.cuts} cuts</span>
