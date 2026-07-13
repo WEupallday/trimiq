@@ -603,7 +603,13 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
       )}
 
       {error && (
-        <div className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">
+          <span>{error}</span>
+          <button type="button" onClick={() => setError("")} aria-label="Dismiss error"
+            className="shrink-0 rounded-lg px-1.5 text-red-200/60 transition hover:text-red-100">
+            ✕
+          </button>
+        </div>
       )}
 
       {/* Queue */}
