@@ -112,6 +112,38 @@ export function getPlan(id: string | null | undefined): Plan {
   return (id && (PLANS as Record<string, Plan>)[id]) || PLANS.free;
 }
 
+// Resolve either a plan id or an already-resolved Plan object. Lets the
+// enforcement helpers below accept the effective per-user plan (which may be
+// the Creator Beta grant) without changing any call sites that pass ids.
+function resolvePlan(p: Plan | string | null | undefined): Plan {
+  return p && typeof p === "object" ? p : getPlan(p as string | null | undefined);
+}
+
+// Creator Beta: invite-only testers get every premium feature (captions,
+// instructions, zooms, phrase-zooms) with tight limits. Flag-driven via the
+// user's isCreatorBeta bit - never sold and never shown on the pricing page.
+export const CREATOR_BETA_PLAN: Plan = {
+  id: "unlimited", // gates like the top tier; identified by name, not id
+  name: "Creator Beta",
+  blurb: "Invite-only creator testers",
+  priceEnvVar: null,
+  edits: 15, fairUseSoftCap: null, batchSize: 10, maxVideoMin: 15, maxUploadMB: 2048,
+  captions: true, instructions: true, zooms: true,
+  regensPerEdit: 10, bulkDownload: true, llmInstructions: true, allFutureFeatures: true,
+  priority: 2, slots: 2, retentionHours: 72,
+  features: ["Every premium feature", "15 edits / month", "Videos up to 15 min"],
+};
+
+// The plan that actually applies to a user. Creator Beta upgrades the feature
+// gates, but a broader PAID plan always wins so the grant never downgrades a
+// real subscriber.
+export function planForUser(planId: string | null | undefined, isCreatorBeta?: boolean | null): Plan {
+  const base = getPlan(planId);
+  if (!isCreatorBeta) return base;
+  if (base.zooms && (!isFinite(base.edits) || base.edits > CREATOR_BETA_PLAN.edits)) return base;
+  return CREATOR_BETA_PLAN;
+}
+
 export function editLimitFor(planId: string | null | undefined): number {
   return getPlan(planId).edits;
 }
@@ -128,8 +160,8 @@ export function priceEnvVarFor(planId: string | null | undefined): string | null
 
 // Queue priority for a user, honoring the Unlimited fair-use soft cap:
 // past the cap the account keeps editing but at standard priority.
-export function priorityFor(planId: string, editsUsedThisCycle: number): number {
-  const p = getPlan(planId);
+export function priorityFor(plan: Plan | string, editsUsedThisCycle: number): number {
+  const p = resolvePlan(plan);
   if (p.fairUseSoftCap != null && editsUsedThisCycle >= p.fairUseSoftCap) return 0;
   return p.priority;
 }
@@ -138,10 +170,10 @@ export function priorityFor(planId: string, editsUsedThisCycle: number): number 
 // Returns what was locked so the UI can upsell instead of silently ignoring.
 // (EditOverrides is structurally typed here to avoid an import cycle.)
 export function applyPlanGates<T extends { captions?: unknown; zoom?: unknown }>(
-  planId: string,
+  plan: Plan | string,
   overrides: T,
 ): { overrides: T; locked: string[] } {
-  const p = getPlan(planId);
+  const p = resolvePlan(plan);
   const locked: string[] = [];
   const out = { ...overrides };
   if (!p.captions && out.captions) {
@@ -155,17 +187,17 @@ export function applyPlanGates<T extends { captions?: unknown; zoom?: unknown }>
   return { overrides: out, locked };
 }
 
-export function maxUploadBytesFor(planId: string): number {
-  return getPlan(planId).maxUploadMB * 1024 * 1024;
+export function maxUploadBytesFor(plan: Plan | string): number {
+  return resolvePlan(plan).maxUploadMB * 1024 * 1024;
 }
 
-export function maxVideoSecondsFor(planId: string): number {
-  return getPlan(planId).maxVideoMin * 60;
+export function maxVideoSecondsFor(plan: Plan | string): number {
+  return resolvePlan(plan).maxVideoMin * 60;
 }
 
 // Client-safe summary of a user's plan for the dashboard (no secrets).
-export function planSummary(planId: string) {
-  const p = getPlan(planId);
+export function planSummary(plan: Plan | string) {
+  const p = resolvePlan(plan);
   return {
     id: p.id, name: p.name,
     edits: isFinite(p.edits) ? p.edits : null,
