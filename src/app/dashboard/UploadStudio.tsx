@@ -625,7 +625,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
                     <span>·</span>
                     <span>{item.stats.original.toFixed(0)}s → {item.stats.cleaned.toFixed(0)}s</span>
                     <a
-                      href={item.resultUrl}
+                      href={`/api/process?jobId=${item.jobId}&download=1`}
                       download={`${item.name.replace(/\.[^.]+$/, "")}-trimiq.mp4`}
                       className="ml-auto rounded-lg bg-white px-3 py-1.5 font-medium text-ink transition hover:bg-white/90"
                     >
@@ -745,7 +745,7 @@ function ReviewPanel({ item, busy, onRegenerate }: {
             {styleLabel} style · processed in {fmtSecs(processMs / 1000)} · engine v{s.engineVersion || "—"}
           </p>
         </div>
-        <a href={item.resultUrl} download={`${item.name.replace(/\.[^.]+$/, "")}-trimiq.mp4`}
+        <a href={`/api/process?jobId=${item.jobId}&download=1`} download={`${item.name.replace(/\.[^.]+$/, "")}-trimiq.mp4`}
           onClick={() => track("download_clicked", { mode: item.mode })}
           className="rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/45">
           Download
