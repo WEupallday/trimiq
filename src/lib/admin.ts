@@ -175,6 +175,7 @@ export async function adminData() {
       processing: Array.from(jobs.values()).filter((j) => j.status === "processing").length,
     },
     recentErrors: recentErrors.map((e) => ({
+      id: e.id,
       name: e.name,
       email: e.email,
       error: e.error,
