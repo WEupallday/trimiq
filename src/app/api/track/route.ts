@@ -33,7 +33,9 @@ export async function POST(req: NextRequest) {
       anonId = randomUUID();
       res.cookies.set("trimiq_anon", anonId, { maxAge: 60 * 60 * 24 * 365, sameSite: "lax", path: "/" });
     }
-    const props = body.props && typeof body.props === "object" ? body.props : undefined;
+    let props = body.props && typeof body.props === "object" ? body.props : undefined;
+    // Cap stored payload size so the events table can't be flooded.
+    if (props && JSON.stringify(props).length > 2000) props = undefined;
     await track(name, { email: session?.email ?? null, anonId, props });
     return res;
   } catch {
