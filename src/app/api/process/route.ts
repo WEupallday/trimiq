@@ -18,7 +18,7 @@ import { getSession } from "@/lib/auth";
 import { creditsLeft } from "@/lib/credits";
 import { getStripe, priceIdForPlan, getOrCreateCustomer, syncSubscription, planFromSub } from "@/lib/stripe";
 import {
-  getPlan, applyPlanGates, priorityFor, maxUploadBytesFor, maxVideoSecondsFor, planSummary,
+  getPlan, planForUser, applyPlanGates, priorityFor, maxUploadBytesFor, maxVideoSecondsFor, planSummary,
 } from "@/lib/plans";
 import { requireAdmin, adminData } from "@/lib/admin";
 import { notify, notificationsEnabled } from "@/lib/notify";
@@ -35,13 +35,23 @@ async function handleAdminAction(req: NextRequest) {
   const admin = await requireAdmin();
   if (!admin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
   try {
-    const { action, userId, plan } = await req.json();
+    const { action, userId, plan, errorId } = await req.json();
     if (action === "testNotification") {
       if (!notificationsEnabled()) {
         return NextResponse.json({ error: "Notifications aren't configured. Set DISCORD_WEBHOOK_URL first." }, { status: 400 });
       }
       await notify("test", { message: "TrimIQ notifications are working", triggeredBy: admin.email });
       return NextResponse.json({ ok: true, sent: true });
+    }
+    // Error-log maintenance (log entries only - nothing else is touched).
+    if (action === "clearRecentErrors") {
+      const r = await prisma.processingJob.deleteMany({ where: { status: "error" } });
+      return NextResponse.json({ ok: true, cleared: r.count });
+    }
+    if (action === "deleteError") {
+      if (!errorId) return NextResponse.json({ error: "Missing error id." }, { status: 400 });
+      await prisma.processingJob.deleteMany({ where: { id: String(errorId), status: "error" } });
+      return NextResponse.json({ ok: true });
     }
     if (!userId) return NextResponse.json({ error: "Missing user." }, { status: 400 });
     if (action === "resetCredits") {
@@ -440,7 +450,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "This account is suspended. Please contact support." }, { status: 403 });
     }
     const plan = user?.plan ?? "free";
-    const planCfg = getPlan(plan);
+    const planCfg = planForUser(plan, user?.isCreatorBeta);
     // Credits are only charged on success, but queued/processing jobs are
     // reserved so a user can\u2019t enqueue more than they have credits for.
     const pending = await pendingUnchargedCount(session.email);
@@ -475,7 +485,7 @@ export async function POST(req: NextRequest) {
 
     if (!planCfg.captions && req.nextUrl.searchParams.get("captions") === "1")
       locked.push("Auto captions are available on Starter and up.");
-    const gated = applyPlanGates(plan, parsed.overrides);
+    const gated = applyPlanGates(planCfg, parsed.overrides);
     parsed.overrides = gated.overrides;
     locked.push(...gated.locked);
 
@@ -516,7 +526,7 @@ export async function POST(req: NextRequest) {
       await unlink(inPath).catch(() => {});
       return NextResponse.json({ error: "That file looks empty or didn't upload fully. Please try again." }, { status: 400 });
     }
-    if (size > maxUploadBytesFor(plan)) {
+    if (size > maxUploadBytesFor(planCfg)) {
       await unlink(inPath).catch(() => {});
       return NextResponse.json(
         { error: `That video is too large for your ${planCfg.name} plan (max ${planCfg.maxUploadMB} MB). Upgrade for bigger uploads.` },
@@ -524,8 +534,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const paid = plan !== "free";
-    const priority = priorityFor(plan, user?.editsUsed ?? 0);
+    const paid = plan !== "free" || !!user?.isCreatorBeta;
+    const priority = priorityFor(planCfg, user?.editsUsed ?? 0);
     const job = createJob(session.email, originalName, {
       paid, batchId, priority, mode, instructions: instructionsText || undefined,
     });
@@ -543,7 +553,7 @@ export async function POST(req: NextRequest) {
     });
 
     runPrioritized(priority, session.email, planCfg.slots, () =>
-      cleanVideo(inPath, outPath, { mode, fileBytes: size, maxDurationSec: maxVideoSecondsFor(plan), overrides: parsed.overrides, onStage: (s) => { job.status = "processing"; job.stage = s; persistJob(job); } })
+      cleanVideo(inPath, outPath, { mode, fileBytes: size, maxDurationSec: maxVideoSecondsFor(planCfg), overrides: parsed.overrides, onStage: (s) => { job.status = "processing"; job.stage = s; persistJob(job); } })
     )
       .then(async (result) => {
         // If the user deleted this job while it was rendering, discard the
@@ -679,7 +689,7 @@ export async function GET(req: NextRequest) {
     const left = creditsLeft(plan, user?.editsUsed ?? 0, user?.isCreatorBeta);
     return NextResponse.json({
       projects,
-      plan: planSummary(plan),
+      plan: planSummary(planForUser(plan, user?.isCreatorBeta)),
       editsUsed: user?.editsUsed ?? 0,
       creditsLeft: left > 100000 ? null : left, // null = fair-use unlimited
       unackedBatches: unacked.map((u) => u.batchId),
