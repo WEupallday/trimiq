@@ -17,7 +17,8 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "media-src 'self' blob:",
-      "connect-src 'self'",
+      // wikimedia: public media CDN used by the admin benchmark workflow.
+      "connect-src 'self' https://upload.wikimedia.org https://commons.wikimedia.org",
       "font-src 'self' data:",
       "object-src 'none'",
       "base-uri 'self'",
