@@ -701,6 +701,16 @@ export async function DELETE(req: NextRequest) {
   if (job && job.email !== session.email) {
     return NextResponse.json({ error: "Not allowed." }, { status: 403 });
   }
-  removeJob(id);
+  // Don’t yank files out from under an active render.
+  if (job && (job.status === "processing" || job.status === "queued")) {
+    return NextResponse.json(
+      { error: "That video is still processing - try again when it finishes." },
+      { status: 409 }
+    );
+  }
+  removeJob(id); // frees the media files on disk + hot state
+  // Also remove the persistent record (ownership enforced in the query) so
+  // the dashboard poller can’t resurrect the project after a delete.
+  await prisma.queueJob.deleteMany({ where: { id, email: session.email } }).catch(() => {});
   return NextResponse.json({ ok: true });
 }
