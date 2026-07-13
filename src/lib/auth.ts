@@ -6,7 +6,14 @@ import bcrypt from "bcryptjs";
 export const SESSION_COOKIE = "trimiq_session";
 
 function secretKey() {
-  const s = process.env.AUTH_SECRET || "dev-only-insecure-secret-change-me";
+  const s = process.env.AUTH_SECRET;
+  if (!s) {
+    // Never run production sessions on a guessable secret.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("AUTH_SECRET must be set in production.");
+    }
+    return new TextEncoder().encode("dev-only-insecure-secret-change-me");
+  }
   return new TextEncoder().encode(s);
 }
 
