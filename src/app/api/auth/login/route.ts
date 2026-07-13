@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { verifyPassword, hashPassword, createSessionToken, SESSION_COOKIE } from "@/lib/auth";
 import { sendEmail, resetEmailHtml } from "@/lib/email";
+import { rateLimit, clientIp } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,9 @@ export async function POST(req: Request) {
 
     // ---- Request a password reset link --------------------------------------
     if (action === "request_reset") {
+      if (!rateLimit("reset:" + clientIp(req), 5, 60 * 60 * 1000)) {
+        return NextResponse.json({ error: "Too many reset requests - please try again later." }, { status: 429 });
+      }
       const email = String(body.email || "").trim().toLowerCase();
       if (email && email.includes("@")) {
         const user = await prisma.user.findUnique({ where: { email } });
@@ -43,6 +47,9 @@ export async function POST(req: Request) {
 
     // ---- Complete a password reset ------------------------------------------
     if (action === "do_reset") {
+      if (!rateLimit("doreset:" + clientIp(req), 10, 60 * 60 * 1000)) {
+        return NextResponse.json({ error: "Too many attempts - please try again later." }, { status: 429 });
+      }
       const token = String(body.token || "");
       const password = String(body.password || "");
       if (password.length < 6) {
@@ -68,6 +75,9 @@ export async function POST(req: Request) {
     const password = body.password;
     if (!email || !password) {
       return NextResponse.json({ error: "Enter your email and password." }, { status: 400 });
+    }
+    if (!rateLimit("login:" + clientIp(req) + ":" + email, 10, 10 * 60 * 1000)) {
+      return NextResponse.json({ error: "Too many login attempts - please wait a few minutes and try again." }, { status: 429 });
     }
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user || !(await verifyPassword(String(password), user.passwordHash))) {
