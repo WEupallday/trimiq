@@ -1,14 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import Logo from "@/components/Logo";
-import LogoutButton from "@/components/LogoutButton";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { creditsLeft, isUnlimited } from "@/lib/credits";
 import { getPlan } from "@/lib/plans";
 import { isAdminEmail } from "@/lib/admin";
 import BillingPanel from "@/components/BillingPanel";
-import AccountSettings from "@/components/AccountSettings";
+import ProfileMenu from "@/components/ProfileMenu";
 import UploadStudio from "./UploadStudio";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +24,6 @@ export default async function DashboardPage() {
   const unlimited = isUnlimited(plan);
   const paid = plan !== "free";
   const renewalISO = user?.currentPeriodEnd ? user.currentPeriodEnd.toISOString() : null;
-  const displayName = user?.username || session.email;
   const admin = await isAdminEmail(session.email);
 
   return (
@@ -40,26 +38,21 @@ export default async function DashboardPage() {
             TrimIQ
           </Link>
           <div className="flex items-center gap-3">
-            <span className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] py-1 pl-1 pr-3 text-xs sm:flex">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-[11px] font-bold text-white">
-                {(displayName || "U").slice(0, 1).toUpperCase()}
-              </span>
-              <span className="font-medium text-white/80">{displayName}</span>
-            </span>
             {creatorBeta && (
               <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200">
                 Creator Beta
               </span>
             )}
-            {admin && (
-              <Link href="/admin" className="rounded-lg border border-indigo-400/40 px-3 py-1.5 text-xs font-medium text-indigo-200 transition hover:bg-indigo-500/10">
-                Admin
-              </Link>
-            )}
             <span className="glass rounded-full px-3 py-1.5 text-xs text-white/70">
               {unlimited ? `${planName} plan` : `${planName} · ${credits} ${credits === 1 ? "edit" : "edits"} left`}
             </span>
-            <LogoutButton />
+            <ProfileMenu
+              username={user?.username ?? ""}
+              email={session.email}
+              tiktok={user?.tiktokUsername ?? ""}
+              planLabel={planName}
+              admin={admin}
+            />
           </div>
         </div>
       </header>
@@ -80,7 +73,6 @@ export default async function DashboardPage() {
             paid={paid}
             renewalISO={renewalISO}
           />
-          <AccountSettings currentUsername={user?.username ?? ""} email={session.email} currentTiktok={user?.tiktokUsername ?? ""} />
         </div>
 
         <UploadStudio credits={credits} unlimited={unlimited} />
