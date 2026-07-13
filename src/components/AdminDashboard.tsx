@@ -120,6 +120,22 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
       </Section>
 
       {/* Revenue analytics */}
+      {data.analytics && (
+        <Section title="Launch metrics">
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <Stat label="Signups (7d)" value={data.analytics.signups7d} accent />
+            <Stat label="Uploads (7d / all)" value={data.analytics.uploads7d + " / " + data.analytics.uploads} />
+            <Stat label="Edits done (7d / all)" value={data.analytics.completed7d + " / " + data.analytics.completed} />
+            <Stat label="Failed (7d / all)" value={data.analytics.failed7d + " / " + data.analytics.failed} />
+            <Stat label="Error rate" value={data.analytics.errorRatePct + "%"} />
+            <Stat label="Avg processing" value={data.analytics.avgProcessSec != null ? data.analytics.avgProcessSec + "s" : "-"} />
+            <Stat label="Free users" value={data.analytics.freeUsers} />
+            <Stat label="Paid users" value={data.analytics.paidUsers} accent />
+            <Stat label="Conversion" value={data.analytics.conversionPct + "%"} />
+          </div>
+        </Section>
+      )}
+
       <SupportInbox />
 
       <Section title="Revenue analytics">
