@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.4.1";
+export const ENGINE_VERSION = "7.5.0";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -618,8 +618,11 @@ function planZooms(
       const si = segs.findIndex(([a, b]) => tAt >= a - 0.05 && tAt < b);
       if (si >= 0 && !picks.some((p) => p.seg === si)) picks.push({ seg: si, scale });
     }
-    // Targeted mode: the user said exactly where to zoom - no auto picks.
-    return { picks, notes };
+    // Targeted mode: if any requested phrase was found, zoom exactly there.
+    if (picks.length) return { picks, notes };
+    // Every phrase missed - fall through to smart picks so an explicit zoom
+    // request always produces zooms (the misses are already noted above).
+    notes.push("TrimIQ picked the strongest moments instead.");
   }
 
   const gap = z.importantOnly
@@ -627,6 +630,8 @@ function planZooms(
     : ZOOM_GAP[z.frequency || "medium"] || 8;
   let lastZoomEnd = -1e9; // output-timeline time when the last zoom ended
   let outT = 0;
+  let bestIdx = -1; // strongest candidate, for the at-least-one guarantee
+  let bestScore = -1;
   for (let i = 0; i < segs.length; i++) {
     const [a, b] = segs[i];
     const segDur = b - a;
@@ -638,36 +643,41 @@ function planZooms(
     const text = wordsIn.map((w) => w.raw || w.w).join(" ");
     if (/[!?]/.test(text)) score += 1;
     if (/\d/.test(text)) score += 1;
+    if (/[$%]/.test(text)) score += 1; // prices and percentages = key info
+    if (/\b(amazing|incredible|insane|crazy|huge|free|secret|never|best|worst|stop|wait|listen|important|guaranteed?|new|finally)\b/i.test(text)) score += 1; // emphasis words
+    if (/\b(you (?:need|have|want|gotta)|let me show|check this|watch this|here'?s)\b/i.test(text)) score += 1; // direct address
     if (z.target === "product" && /\b(this|these|here|look|check|watch)\b/i.test(text)) score += 2;
     if (segDur >= 1.2 && segDur <= 9) score += 1;
     if (!kept.length) score = i % 2 === 0 ? 2 : 0; // no transcript: steady rhythm
+    if (segDur >= 0.8 && score > bestScore) { bestScore = score; bestIdx = i; }
     const need = z.importantOnly ? 4 : 2;
     if (score >= need && outT - lastZoomEnd >= gap && segDur >= 0.8) {
-      picks.push({ seg: i, scale });
+      // Standout moments get the full punch; borderline ones a gentler push,
+      // so back-to-back zooms don't all look identical.
+      const punch = score >= need + 2 ? scale : 1 + (scale - 1) * 0.8;
+      picks.push({ seg: i, scale: Math.round(punch * 1000) / 1000 });
       lastZoomEnd = outT + segDur;
     }
     outT += segDur;
   }
-  // Zooms were explicitly requested: guarantee at least one on the longest
-  // suitable segment rather than silently doing nothing.
-  if (!picks.length && !z.importantOnly) {
-    let best = -1;
-    let bestDur = 0;
-    segs.forEach(([a, b], i) => {
-      if (b - a > bestDur) { best = i; bestDur = b - a; }
-    });
-    if (best >= 0 && bestDur >= 1) picks.push({ seg: best, scale });
-  }
+  // Zooms were requested: guarantee at least one, on the strongest suitable
+  // segment, rather than silently doing nothing.
+  if (!picks.length && bestIdx >= 0) picks.push({ seg: bestIdx, scale });
   return { picks, notes };
 }
 
-// Smooth centered push-in for one segment. zoompan state resets per filter
-// instance, so each zoomed segment ramps from 1.0 independently.
+// Cinematic centered push-in: smootherstep ease-in-out up to the target
+// scale, then hold. Feels like an operated camera move instead of a linear
+// digital ramp. zoompan state resets per filter instance, so each zoomed
+// segment ramps from 1.0 independently.
 function zoomFilter(scale: number, segDur: number, fps: number, fpsStr: string, w: number, h: number): string {
-  const ramp = Math.max(0.4, Math.min(1.6, segDur * 0.6));
-  const inc = (scale - 1) / Math.max(1, ramp * fps);
+  const ramp = Math.max(0.5, Math.min(2.2, segDur * 0.7));
+  const N = Math.max(2, Math.round(ramp * fps));
+  const D = (scale - 1).toFixed(6);
+  const T = "(on/" + N + ")"; // 0..1 progress through the ramp
+  const ease = "(pow(" + T + ",3)*(6*pow(" + T + ",2)-15*" + T + "+10))"; // smootherstep
   return (
-    "zoompan=z='min(1+" + inc.toFixed(6) + "*on," + scale.toFixed(3) + ")'" +
+    "zoompan=z='if(lte(on," + N + "),1+" + D + "*" + ease + "," + scale.toFixed(3) + ")'" +
     ":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=" + w + "x" + h + ":fps=" + fpsStr
   );
 }
