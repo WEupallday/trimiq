@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.0";
+export const ENGINE_VERSION = "7.5.1";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -168,12 +168,33 @@ async function getDuration(file: string): Promise<number> {
   return 0;
 }
 
+// DISPLAY dimensions - coded width/height corrected for rotation metadata.
+// Phone videos are commonly stored landscape with a 90° display rotation;
+// ffmpeg auto-rotates frames on decode, so every filter (zoompan sizing,
+// caption PlayRes) must use the rotated size or concat fails with a size
+// mismatch and the effect render falls back to a plain cut.
 async function getDims(file: string): Promise<{ w: number; h: number }> {
   const { stdout } = await run(FFPROBE, [
-    "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", file,
+    "-v", "error", "-select_streams", "v:0",
+    "-show_entries", "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
+    "-of", "json", file,
   ]);
-  const [w, h] = stdout.trim().split(",").map(Number);
-  return { w: w || 1080, h: h || 1920 };
+  let w = 1080;
+  let h = 1920;
+  let rot = 0;
+  try {
+    const s = JSON.parse(stdout)?.streams?.[0] || {};
+    w = Number(s.width) || 1080;
+    h = Number(s.height) || 1920;
+    const sd = Array.isArray(s.side_data_list)
+      ? s.side_data_list.find((d: any) => d && d.rotation !== undefined)
+      : null;
+    rot = Number(sd?.rotation ?? s.tags?.rotate ?? 0) || 0;
+  } catch { /* fall back to portrait defaults */ }
+  if (Math.abs(Math.round(rot)) % 180 === 90) {
+    const tmp = w; w = h; h = tmp;
+  }
+  return { w, h };
 }
 
 // Exact source frame rate, as both a number (for snapping cut points to the frame
@@ -921,10 +942,19 @@ export async function cleanVideo(
       // Graceful degradation: captioned render failed (e.g. missing fonts) ->
       // deliver the edit without captions rather than failing the job.
       console.error("[ENGINE] effect render failed, retrying without captions/zooms:", (e as any)?.message || e);
+      const zoomWasRequested = zoomPlan.length > 0;
       assPath = null;
       captionInfo = null;
       zoomPlan = [];
-      zoomInfo = null;
+      // Be honest in the review page instead of silently showing "Off".
+      zoomInfo = zoomWasRequested
+        ? {
+            count: 0,
+            intensity: ov.zoom?.intensity || "medium",
+            frequency: ov.zoom?.frequency || "medium",
+            notes: ["Zoom effects couldn't be rendered on this video's format, so the clean cut was delivered without them."],
+          }
+        : null;
       capped = await renderFinal(input, output, segs, settings, original, null, []);
     } else {
       throw e;
