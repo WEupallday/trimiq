@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.6";
+export const ENGINE_VERSION = "7.5.7";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -617,9 +617,10 @@ function planZooms(
   const notes: string[] = [];
   if (!z.enabled || !segs.length) return { picks: [], notes };
   const scale = ZOOM_SCALE[z.intensity || "medium"] || 1.18;
-  // Explicit "zoom when I say X" requests default to the strong punch -
-  // the user asked to SEE a zoom at that exact moment.
+  // Explicit "zoom when I say X" and "key moments" requests default to the
+  // strong punch - the user asked to SEE those zooms.
   const phraseScale = z.intensity ? scale : ZOOM_SCALE.strong;
+  const autoScale = z.intensity ? scale : z.importantOnly ? ZOOM_SCALE.strong : scale;
   const kept = planInfo ? planInfo.allWords.filter((_, i) => !planInfo.mask[i]) : [];
   const picks: { seg: number; scale: number }[] = [];
 
@@ -690,7 +691,7 @@ function planZooms(
     if (score >= need && outT - lastZoomEnd >= gap && segDur >= 0.8) {
       // Standout moments get the full punch; borderline ones a gentler push,
       // so back-to-back zooms don't all look identical.
-      const punch = score >= need + 2 ? scale : 1 + (scale - 1) * 0.8;
+      const punch = score >= need + 2 ? autoScale : 1 + (autoScale - 1) * 0.8;
       picks.push({ seg: i, scale: Math.round(punch * 1000) / 1000 });
       lastZoomEnd = outT + segDur;
     }
@@ -698,7 +699,7 @@ function planZooms(
   }
   // Zooms were requested: guarantee at least one, on the strongest suitable
   // segment, rather than silently doing nothing.
-  if (!picks.length && bestIdx >= 0) picks.push({ seg: bestIdx, scale });
+  if (!picks.length && bestIdx >= 0) picks.push({ seg: bestIdx, scale: autoScale });
   return { picks, notes };
 }
 
