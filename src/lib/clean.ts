@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.3";
+export const ENGINE_VERSION = "7.5.4";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -702,21 +702,23 @@ function planZooms(
   return { picks, notes };
 }
 
-// Cinematic centered push-in: smootherstep ease-in-out up to the target
-// scale, then hold. Feels like an operated camera move instead of a linear
-// digital ramp. zoompan state resets per filter instance, so each zoomed
-// segment ramps from 1.0 independently.
+// Visible, reliable push-in. Uses zoompan's pzoom accumulator (previous
+// frame's zoom) which is the only zoompan variable that advances
+// dependably with d=1 on video input: zoom grows linearly by a fixed
+// per-frame increment up to the target scale, then holds. Verified at the
+// pixel level (frame probes) - earlier on/in-based expressions silently
+// plateaued far below the target scale.
 function zoomFilter(scale: number, segDur: number, fps: number, fpsStr: string, w: number, h: number): string {
   const ramp = Math.max(0.35, Math.min(1.2, segDur * 0.5));
-  const N = Math.max(2, Math.round(ramp * fps));
-  const D = (scale - 1).toFixed(6);
-  const T = "(on/" + N + ")"; // 0..1 progress through the ramp
-  const ease = "(pow(" + T + ",3)*(6*pow(" + T + ",2)-15*" + T + "+10))"; // smootherstep
+  const frames = Math.max(2, Math.round(ramp * Math.min(Math.max(fps, 10), 120)));
+  const inc = ((scale - 1) / frames).toFixed(6);
   return (
-    "zoompan=z='if(lte(on," + N + "),1+" + D + "*" + ease + "," + scale.toFixed(3) + ")'" +
-    ":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=" + w + "x" + h + ":fps=" + fpsStr
+    "zoompan=z=" + "'min(pzoom+" + inc + "," + scale.toFixed(3) + ")'" +
+    ":x=" + "'iw/2-(iw/zoom/2)'" + ":y=" + "'ih/2-(ih/zoom/2)'" +
+    ":d=1:s=" + w + "x" + h + ":fps=" + fpsStr
   );
 }
+
 
 // ============================== rendering ==================================
 // trim + concat render. Validated empirically (synchronized flash+beep markers,
