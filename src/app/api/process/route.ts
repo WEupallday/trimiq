@@ -654,7 +654,7 @@ export async function POST(req: NextRequest) {
     // regenerate with different settings without re-uploading. jobs.ts prunes
     // originals automatically (24h free / 72h paid).
 
-    return NextResponse.json({ jobId: job.id, applied: parsed.applied, unrecognized: parsed.unrecognized });
+    return NextResponse.json({ jobId: job.id, applied: parsed.applied, unrecognized: parsed.unrecognized, locked });
   } catch (err) {
     if (inPath && !req.nextUrl.searchParams.get("reedit")) await unlink(inPath).catch(() => {});
     console.error("UPLOAD ERROR:", err);
