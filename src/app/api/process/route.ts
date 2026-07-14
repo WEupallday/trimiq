@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { unlink, mkdtemp, stat, readFile } from "node:fs/promises";
-import { createWriteStream } from "node:fs";
+import { unlink, mkdtemp, stat } from "node:fs/promises";
+import { createWriteStream, createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { tmpdir } from "node:os";
@@ -712,24 +712,33 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Not allowed." }, { status: 403 });
   }
 
-  // Stream back the untouched original (before/after preview on the review page).
+  // Stream back the untouched original (before/after preview on the review
+  // page). STREAMED, never buffered: holding whole videos in memory was a
+  // driver of the instance hitting its memory limit.
   if (params.get("original") === "1") {
-    const data = job.inputPath ? await readFile(job.inputPath).catch(() => null) : null;
-    if (!data) return NextResponse.json({ error: "The original is no longer available." }, { status: 410 });
-    return new NextResponse(data, { status: 200, headers: { "Content-Type": "video/mp4" } });
+    const st = job.inputPath ? await stat(job.inputPath).catch(() => null) : null;
+    if (!st) return NextResponse.json({ error: "The original is no longer available." }, { status: 410 });
+    const stream = Readable.toWeb(createReadStream(job.inputPath!)) as unknown as ReadableStream;
+    return new NextResponse(stream as any, {
+      status: 200,
+      headers: { "Content-Type": "video/mp4", "Content-Length": String(st.size) },
+    });
   }
 
   if (params.get("download") === "1") {
     if (job.status !== "done" || !job.outputPath) {
       return NextResponse.json({ error: "This edit isn't ready yet." }, { status: 409 });
     }
-    const data = await readFile(job.outputPath).catch(() => null);
-    if (!data) return NextResponse.json({ error: "This file is no longer available." }, { status: 410 });
+    const st = await stat(job.outputPath).catch(() => null);
+    if (!st) return NextResponse.json({ error: "This file is no longer available." }, { status: 410 });
     await track("download", { email: job.email, props: { mode: job.mode || "" } });
-    return new NextResponse(data, {
+    // Streamed, never buffered (see the original=1 branch above).
+    const stream = Readable.toWeb(createReadStream(job.outputPath)) as unknown as ReadableStream;
+    return new NextResponse(stream as any, {
       status: 200,
       headers: {
         "Content-Type": "video/mp4",
+        "Content-Length": String(st.size),
         "Content-Disposition": `attachment; filename="${downloadName(job.originalName)}"`,
       },
     });
