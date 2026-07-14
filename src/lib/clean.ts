@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.5";
+export const ENGINE_VERSION = "7.5.6";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -702,22 +702,20 @@ function planZooms(
   return { picks, notes };
 }
 
-// Visible, reliable push-in, driven by TIME (the it variable = input frame
-// timestamp), not frame counts: frame-rate metadata is unreliable for
-// browser-recorded webm, which made count-based ramps run far too slowly.
-// Smoothstep ease up to the target scale within the ramp, then hold.
-// Pixel-verified via frame probes on a static test pattern.
+// TikTok-style punch-in: the zoomed segment is cropped to 1/scale and
+// scaled back up, so the whole segment plays visibly magnified from the
+// cut. Static crop+scale math is deterministic on every input format -
+// zoompan's frame/time variables (on, in, pzoom, it) all proved
+// unreliable on real video and produced invisible ramps (pixel-verified
+// with frame probes). Even dimensions keep the encoder happy.
 function zoomFilter(scale: number, segDur: number, fps: number, fpsStr: string, w: number, h: number): string {
-  const ramp = Math.max(0.35, Math.min(1.2, segDur * 0.5)).toFixed(3);
-  const D = (scale - 1).toFixed(6);
-  const p = "(it/" + ramp + ")";
-  const ease = "(" + p + "*" + p + "*(3-2*" + p + "))";
-  return (
-    "zoompan=z=" + "'if(lte(it," + ramp + "),1+" + D + "*" + ease + "," + scale.toFixed(3) + ")'" +
-    ":x=" + "'iw/2-(iw/zoom/2)'" + ":y=" + "'ih/2-(ih/zoom/2)'" +
-    ":d=1:s=" + w + "x" + h + ":fps=" + fpsStr
-  );
+  const cw = Math.max(2, Math.round(w / scale / 2) * 2);
+  const ch = Math.max(2, Math.round(h / scale / 2) * 2);
+  const x = Math.max(0, Math.round((w - cw) / 2));
+  const y = Math.max(0, Math.round((h - ch) / 2));
+  return "crop=" + cw + ":" + ch + ":" + x + ":" + y + ",scale=" + w + ":" + h;
 }
+
 
 
 
