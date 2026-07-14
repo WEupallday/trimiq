@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.2";
+export const ENGINE_VERSION = "7.5.3";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -201,6 +201,17 @@ async function getDims(file: string): Promise<{ w: number; h: number }> {
 // Exact source frame rate, as both a number (for snapping cut points to the frame
 // grid) and its original fraction string (e.g. "30000/1001" for 29.97) so the
 // output frame rate matches the input precisely.
+// Whether the file has any audio stream at all (screen recordings and some
+// browser captures are video-only; every audio step must be optional).
+async function hasAudioStream(file: string): Promise<boolean> {
+  try {
+    const { stdout } = await run(FFPROBE, ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type", "-of", "csv=p=0", file]);
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function getFrameRate(file: string): Promise<{ num: number; str: string }> {
   const { stdout } = await run(FFPROBE, [
     "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "default=nw=1:nk=1", file,
@@ -732,11 +743,14 @@ async function renderFinal(
   if (noCuts && assPath && !hasZooms) {
     const { w: w0, h: h0 } = await getDims(input);
     const preset0 = Math.max(w0, h0) > 1920 ? "superfast" : "veryfast";
-    await run(FFMPEG, [
+    const hasAudio0 = await hasAudioStream(input);
+    const args0 = [
       "-y", "-i", input, "-vf", `subtitles=${assPath}`,
       "-c:v", "libx264", "-preset", preset0, "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "0",
-      "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", output,
-    ]);
+    ];
+    if (hasAudio0) args0.push("-c:a", "aac", "-b:a", "192k", "-ar", "48000");
+    args0.push("-movflags", "+faststart", output);
+    await run(FFMPEG, args0);
     return false;
   }
 
@@ -756,25 +770,27 @@ async function renderFinal(
 
   // Per-segment trim (video) + atrim (audio), each reset to start at 0, then the
   // concat filter joins them keeping A and V locked on one timeline.
+  const hasAudio = await hasAudioStream(input);
   let f = "";
   S.forEach(([a, b], i) => {
     const zm = hasZooms ? zooms!.find((z) => z.seg === i) : undefined;
     const zf = zm ? "," + zoomFilter(zm.scale, b - a, fps, fpsStr, w, h) : "";
     f += `[0:v]trim=${a.toFixed(4)}:${b.toFixed(4)},setpts=PTS-STARTPTS${zf}[v${i}];`;
-    f += `[0:a]atrim=${a.toFixed(4)}:${b.toFixed(4)},asetpts=PTS-STARTPTS[a${i}];`;
+    if (hasAudio) f += `[0:a]atrim=${a.toFixed(4)}:${b.toFixed(4)},asetpts=PTS-STARTPTS[a${i}];`;
   });
-  S.forEach((_, i) => (f += `[v${i}][a${i}]`));
-  f += `concat=n=${S.length}:v=1:a=1[cv][a]`;
+  S.forEach((_, i) => (f += hasAudio ? `[v${i}][a${i}]` : `[v${i}]`));
+  f += `concat=n=${S.length}:v=1:a=${hasAudio ? 1 : 0}${hasAudio ? "[cv][a]" : "[cv]"}`;
   f += assPath ? `;[cv]subtitles=${assPath}[v]` : `;[cv]null[v]`;
 
-  await run(FFMPEG, [
-    "-y", "-i", input, "-filter_complex", f, "-map", "[v]", "-map", "[a]",
+  const args = ["-y", "-i", input, "-filter_complex", f, "-map", "[v]"];
+  if (hasAudio) args.push("-map", "[a]");
+  args.push(
     "-vsync", "cfr", "-r", fpsStr,
     "-c:v", "libx264", "-preset", preset, "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "0",
-    "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-    "-movflags", "+faststart", "-max_muxing_queue_size", "1024",
-    output,
-  ]);
+  );
+  if (hasAudio) args.push("-c:a", "aac", "-b:a", "192k", "-ar", "48000");
+  args.push("-movflags", "+faststart", "-max_muxing_queue_size", "1024", output);
+  await run(FFMPEG, args);
   return false; // never scaled
 }
 
@@ -879,10 +895,16 @@ export async function cleanVideo(
 
   stage("Detecting pauses");
   if (mode === "audio") {
-    let thresholdDb = -32;
-    if (settings.silenceThresholdDb === "auto") thresholdDb = clamp((await measureMaxDb(input)) - 30, -45, -20);
-    const silences = await detectSilences(input, thresholdDb, settings.minPause);
-    segs = planFromSilences(silences, original, settings);
+    try {
+      let thresholdDb = -32;
+      if (settings.silenceThresholdDb === "auto") thresholdDb = clamp((await measureMaxDb(input)) - 30, -45, -20);
+      const silences = await detectSilences(input, thresholdDb, settings.minPause);
+      segs = planFromSilences(silences, original, settings);
+    } catch (e) {
+      // Video-only file: nothing to cut by sound - keep the whole clip.
+      console.error("[ENGINE] silence detection unavailable (no audio track?):", (e as any)?.message || e);
+      segs = [];
+    }
   }
 
   // Protected intro: always keep [0, N] exactly as filmed.
