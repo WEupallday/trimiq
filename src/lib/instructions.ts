@@ -178,6 +178,20 @@ export function parseInstructions(text: string): ParsedInstructions {
       hit = true;
     }
 
+    // Keelz style: the 3-point creator preset (start / key middle / end punch-in
+    // zooms + full TikTok treatment). Unlimited-only (gated server-side).
+    if (/\bkee?lz?\b|\bkells?\b|keelz style|kells style/.test(p)) {
+      const z = zoom();
+      (z as { keelz?: boolean }).keelz = true;
+      z.intensity = z.intensity || "medium";
+      const cap = overrides.captions || { enabled: true };
+      cap.enabled = true;
+      overrides.captions = cap;
+      overrides.pace = overrides.pace || "faster";
+      applied.push("Keelz style - 3 punch-in zooms + captions, TikTok pacing");
+      hit = true;
+    }
+
     // Zooms: "add frequent zoom-ins", "subtle zooms", "only zoom on the
     // important moments", "aggressive zooms", "no zooms". The ENGINE picks
     // the actual moments - users never give timestamps.
