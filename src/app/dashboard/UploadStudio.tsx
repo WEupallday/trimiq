@@ -113,6 +113,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
   const [captionsOn, setCaptionsOn] = useState(false);
   const [captionColor, setCaptionColor] = useState("white");
   const [busy, setBusy] = useState(false);
+  const [combine, setCombine] = useState(false); // multi-clip: combine into ONE video
   const [queue, setQueue] = useState<QItem[]>([]);
   const [error, setError] = useState("");
   const [rating, setRating] = useState(0);
@@ -366,9 +367,52 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
     }
   }
 
+  // Combine several clips into ONE finished video: upload each clip to a
+  // stitch group, then trigger the server to normalize + concatenate + edit
+  // them as a single timeline (one job, one credit).
+  async function combineClips() {
+    const group = `stitch-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const item: QItem = {
+      id: `${Date.now()}-combo`, name: `Combined video (${files.length} clips)`, file: null,
+      status: "uploading", stage: "Uploading clips", error: "", resultUrl: "",
+      stats: null, jobId: "", mode, applied: [],
+    };
+    setQueue([item]);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (f.size / 1024 / 1024 > (plan?.maxUploadMB ?? MAX_UPLOAD_MB)) throw new Error(`"${f.name}" is too large for your plan.`);
+        const r = await fetch(`/api/process?stitch=${group}&index=${i}&name=${encodeURIComponent(f.name)}`, { method: "POST", headers: { "Content-Type": f.type || "video/mp4" }, body: f });
+        if (!r.ok) { const j = await safeJson(r); throw new Error(j.error || "A clip failed to upload."); }
+        patch(item.id, { stage: `Uploading clips (${i + 1}/${files.length})` });
+      }
+      patch(item.id, { status: "processing", stage: "Combining" });
+      const capParam = captionsOn ? `&captions=1&capcolor=${captionColor}` : "";
+      const res = await fetch(
+        `/api/process?stitchRun=${group}&mode=${encodeURIComponent(mode)}&name=${encodeURIComponent("Combined video")}&instructions=${encodeURIComponent(instructions.trim().slice(0, 500))}${capParam}`,
+        { method: "POST" }
+      );
+      if (!res.ok) { const j = await safeJson(res); if (res.status === 402 || j.outOfCredits) { setCreditsLeft(0); router.refresh(); } throw new Error(j.error || "Could not combine the clips."); }
+      const start = await safeJson(res);
+      if (!start.jobId) throw new Error(start.error || "Could not combine the clips.");
+      if (Array.isArray(start.locked) && start.locked.length) setNotice(start.locked.join(" "));
+      patch(item.id, { jobId: start.jobId, applied: Array.isArray(start.applied) ? start.applied : [] });
+      await watchOne(item, start.jobId);
+    } catch (e) {
+      patch(item.id, { status: "error", error: friendlyMsg(e) });
+    }
+  }
+
   async function generate() {
     if (!files.length || outOfCredits || busy) return;
     setError("");
+    // Combine mode: one finished video from all selected clips.
+    if (combine && files.length >= 2) {
+      setBusy(true); setFeedbackSent(false);
+      await combineClips();
+      setBusy(false); loadProjects();
+      return;
+    }
     const q: QItem[] = files.map((f, i) => ({
       id: `${Date.now()}-${i}`,
       name: f.name,
@@ -597,12 +641,26 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
         </div>
       ) : (
         <>
+          {files.length > 1 && (
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setCombine(false)} disabled={busy}
+                className={`rounded-xl border px-3 py-2.5 text-left text-xs transition disabled:opacity-50 ${!combine ? "border-indigo-400/60 bg-indigo-500/15 text-white" : "border-white/10 bg-white/[0.02] text-white/60 hover:text-white"}`}>
+                <div className="text-sm font-medium">Edit separately</div>
+                <div className="text-[10px] text-white/40">each clip becomes its own video</div>
+              </button>
+              <button type="button" onClick={() => setCombine(true)} disabled={busy}
+                className={`rounded-xl border px-3 py-2.5 text-left text-xs transition disabled:opacity-50 ${combine ? "border-fuchsia-400/60 bg-fuchsia-500/15 text-white" : "border-white/10 bg-white/[0.02] text-white/60 hover:text-white"}`}>
+                <div className="text-sm font-medium">Combine into one</div>
+                <div className="text-[10px] text-white/40">stitch clips into a single video</div>
+              </button>
+            </div>
+          )}
           <button
             onClick={generate}
             disabled={!files.length || busy}
             className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3.5 font-medium shadow-lg shadow-indigo-500/25 transition hover:shadow-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {busy ? "Editing…" : files.length > 1 ? `Generate ${files.length} Clean Edits` : "Generate Clean Edit"}
+            {busy ? (combine ? "Combining…" : "Editing…") : combine && files.length > 1 ? `Combine ${files.length} clips into one` : files.length > 1 ? `Generate ${files.length} Clean Edits` : "Generate Clean Edit"}
           </button>
           {!unlimited && (
             <p className="mt-2 text-center text-xs text-white/40">
