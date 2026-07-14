@@ -174,10 +174,11 @@ async function getDuration(file: string): Promise<number> {
 // caption PlayRes) must use the rotated size or concat fails with a size
 // mismatch and the effect render falls back to a plain cut.
 async function getDims(file: string): Promise<{ w: number; h: number }> {
+  // -show_streams (not -show_entries with stream_side_data): the bundled
+  // ffprobe rejects the stream_side_data section selector, but its JSON
+  // stream dump always includes side_data_list / tags when present.
   const { stdout } = await run(FFPROBE, [
-    "-v", "error", "-select_streams", "v:0",
-    "-show_entries", "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
-    "-of", "json", file,
+    "-v", "error", "-select_streams", "v:0", "-show_streams", "-of", "json", file,
   ]);
   let w = 1080;
   let h = 1920;
