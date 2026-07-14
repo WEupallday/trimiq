@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.8";
+export const ENGINE_VERSION = "7.5.9";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -70,7 +70,8 @@ export type ZoomOptions = {
   frequency?: "low" | "medium" | "high";
   importantOnly?: boolean;
   target?: "product" | "speaker";
-  phrases?: string[]; // "zoom in when I say X" - matched against the transcript
+phrases?: string[]; // "zoom in when I say X" - matched against the transcript
+  keelz?: boolean;    // Keelz preset: exactly 3 punch zooms (start / key middle / end)
 };
 
 export type EditOverrides = {
@@ -617,6 +618,31 @@ function planZooms(
   const notes: string[] = [];
   if (!z.enabled || !segs.length) return { picks: [], notes };
   const scale = ZOOM_SCALE[z.intensity || "medium"] || 1.18;
+
+  // ---- Keelz preset: exactly THREE punch-in zooms, no others ------------
+  // One at the start (hook), one on the strongest-scored middle moment, one
+  // at the end. Professional creator rhythm; deterministic across formats.
+  if (z.keelz) {
+    const keelzScale = ZOOM_SCALE.strong; // noticeable, TikTok-style
+    if (segs.length <= 3) {
+      return { picks: segs.map((_, i) => ({ seg: i, scale: keelzScale })), notes };
+    }
+    const kept2 = planInfo ? planInfo.allWords.filter((_, i) => !planInfo.mask[i]) : [];
+    const emph = /\b(amazing|incredible|insane|crazy|huge|free|secret|never|best|worst|stop|wait|listen|important|new|finally|you|need|check|watch|look|this)\b/i;
+    const mid0 = Math.floor(segs.length * 0.25), mid1 = Math.ceil(segs.length * 0.75);
+    let bestSeg = Math.floor(segs.length / 2), bestScore = -1;
+    for (let i = mid0; i < mid1; i++) {
+      const [a, b] = segs[i];
+      const text = kept2.filter((w) => w.start >= a - 0.05 && w.start < b).map((w) => w.raw || w.w).join(" ");
+      let s = (b - a >= 1.2 && b - a <= 9) ? 1 : 0;
+      if (emph.test(text)) s += 2;
+      if (/[!?]/.test(text)) s += 1;
+      if (/[0-9$%]/.test(text)) s += 1;
+      if (s > bestScore) { bestScore = s; bestSeg = i; }
+    }
+    const idxs = Array.from(new Set([0, bestSeg, segs.length - 1]));
+    return { picks: idxs.map((i) => ({ seg: i, scale: keelzScale })), notes };
+  }
   // Explicit "zoom when I say X" and "key moments" requests default to the
   // strong punch - the user asked to SEE those zooms.
   const phraseScale = z.intensity ? scale : ZOOM_SCALE.strong;
