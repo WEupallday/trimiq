@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.4";
+export const ENGINE_VERSION = "7.5.5";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -702,22 +702,23 @@ function planZooms(
   return { picks, notes };
 }
 
-// Visible, reliable push-in. Uses zoompan's pzoom accumulator (previous
-// frame's zoom) which is the only zoompan variable that advances
-// dependably with d=1 on video input: zoom grows linearly by a fixed
-// per-frame increment up to the target scale, then holds. Verified at the
-// pixel level (frame probes) - earlier on/in-based expressions silently
-// plateaued far below the target scale.
+// Visible, reliable push-in, driven by TIME (the it variable = input frame
+// timestamp), not frame counts: frame-rate metadata is unreliable for
+// browser-recorded webm, which made count-based ramps run far too slowly.
+// Smoothstep ease up to the target scale within the ramp, then hold.
+// Pixel-verified via frame probes on a static test pattern.
 function zoomFilter(scale: number, segDur: number, fps: number, fpsStr: string, w: number, h: number): string {
-  const ramp = Math.max(0.35, Math.min(1.2, segDur * 0.5));
-  const frames = Math.max(2, Math.round(ramp * Math.min(Math.max(fps, 10), 120)));
-  const inc = ((scale - 1) / frames).toFixed(6);
+  const ramp = Math.max(0.35, Math.min(1.2, segDur * 0.5)).toFixed(3);
+  const D = (scale - 1).toFixed(6);
+  const p = "(it/" + ramp + ")";
+  const ease = "(" + p + "*" + p + "*(3-2*" + p + "))";
   return (
-    "zoompan=z=" + "'min(pzoom+" + inc + "," + scale.toFixed(3) + ")'" +
+    "zoompan=z=" + "'if(lte(it," + ramp + "),1+" + D + "*" + ease + "," + scale.toFixed(3) + ")'" +
     ":x=" + "'iw/2-(iw/zoom/2)'" + ":y=" + "'ih/2-(ih/zoom/2)'" +
     ":d=1:s=" + w + "x" + h + ":fps=" + fpsStr
   );
 }
+
 
 
 // ============================== rendering ==================================
