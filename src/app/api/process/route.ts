@@ -35,7 +35,7 @@ async function handleAdminAction(req: NextRequest) {
   const admin = await requireAdmin();
   if (!admin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
   try {
-    const { action, userId, plan, errorId } = await req.json();
+    const { action, userId, plan, errorId, jobId, at } = await req.json();
     if (action === "testNotification") {
       if (!notificationsEnabled()) {
         return NextResponse.json({ error: "Notifications aren't configured. Set DISCORD_WEBHOOK_URL first." }, { status: 400 });
@@ -43,6 +43,24 @@ async function handleAdminAction(req: NextRequest) {
       await notify("test", { message: "TrimIQ notifications are working", triggeredBy: admin.email });
       return NextResponse.json({ ok: true, sent: true });
     }
+    // QA: extract one tiny frame from a job's output so zoom/caption results
+    // can be verified visually (returns a small base64 JPEG).
+    if (action === "frameProbe") {
+      const job = jobId ? getJob(String(jobId)) : null;
+      if (!job || !job.outputPath) return NextResponse.json({ error: "Job or output not available." }, { status: 404 });
+      const ffmpegPath = ((await import("ffmpeg-static")).default as unknown as string) || "ffmpeg";
+      const { spawn } = await import("node:child_process");
+      const frame = await new Promise<string>((resolve, reject) => {
+        const p = spawn(ffmpegPath, ["-ss", String(Math.max(0, Number(at) || 0)), "-i", job.outputPath!, "-frames:v", "1", "-vf", "scale=240:-2", "-f", "image2", "-c:v", "mjpeg", "pipe:1"]);
+        const chunks: Buffer[] = [];
+        p.stdout.on("data", (d) => chunks.push(d));
+        p.on("error", reject);
+        p.on("close", (code) => (code === 0 && chunks.length ? resolve(Buffer.concat(chunks).toString("base64")) : reject(new Error("ffmpeg exit " + code))));
+      }).catch(() => "");
+      if (!frame) return NextResponse.json({ error: "Could not extract frame." }, { status: 500 });
+      return NextResponse.json({ frame });
+    }
+
     // Error-log maintenance (log entries only - nothing else is touched).
     if (action === "clearRecentErrors") {
       const r = await prisma.processingJob.deleteMany({ where: { status: "error" } });
