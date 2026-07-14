@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.1";
+export const ENGINE_VERSION = "7.5.2";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -595,7 +595,7 @@ function buildAss(events: { start: number; end: number; text: string }[], w: num
 // API cost. Signals (all already computed): cut boundaries (a resumed thought
 // = emphasis), sentence starts, exclamations / numbers in the transcript, and
 // demonstrative "look at this" phrasing when focusing on the product.
-const ZOOM_SCALE: Record<string, number> = { subtle: 1.06, medium: 1.13, strong: 1.22 };
+const ZOOM_SCALE: Record<string, number> = { subtle: 1.08, medium: 1.18, strong: 1.3 };
 const ZOOM_GAP: Record<string, number> = { low: 14, medium: 8, high: 4 };
 
 function planZooms(
@@ -605,7 +605,10 @@ function planZooms(
 ): { picks: { seg: number; scale: number }[]; notes: string[] } {
   const notes: string[] = [];
   if (!z.enabled || !segs.length) return { picks: [], notes };
-  const scale = ZOOM_SCALE[z.intensity || "medium"] || 1.13;
+  const scale = ZOOM_SCALE[z.intensity || "medium"] || 1.18;
+  // Explicit "zoom when I say X" requests default to the strong punch -
+  // the user asked to SEE a zoom at that exact moment.
+  const phraseScale = z.intensity ? scale : ZOOM_SCALE.strong;
   const kept = planInfo ? planInfo.allWords.filter((_, i) => !planInfo.mask[i]) : [];
   const picks: { seg: number; scale: number }[] = [];
 
@@ -638,7 +641,7 @@ function planZooms(
       }
       const tAt = kept[at].start;
       const si = segs.findIndex(([a, b]) => tAt >= a - 0.05 && tAt < b);
-      if (si >= 0 && !picks.some((p) => p.seg === si)) picks.push({ seg: si, scale });
+      if (si >= 0 && !picks.some((p) => p.seg === si)) picks.push({ seg: si, scale: phraseScale });
     }
     // Targeted mode: if any requested phrase was found, zoom exactly there.
     if (picks.length) return { picks, notes };
@@ -693,7 +696,7 @@ function planZooms(
 // digital ramp. zoompan state resets per filter instance, so each zoomed
 // segment ramps from 1.0 independently.
 function zoomFilter(scale: number, segDur: number, fps: number, fpsStr: string, w: number, h: number): string {
-  const ramp = Math.max(0.5, Math.min(2.2, segDur * 0.7));
+  const ramp = Math.max(0.35, Math.min(1.2, segDur * 0.5));
   const N = Math.max(2, Math.round(ramp * fps));
   const D = (scale - 1).toFixed(6);
   const T = "(on/" + N + ")"; // 0..1 progress through the ramp
