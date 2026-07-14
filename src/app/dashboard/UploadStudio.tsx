@@ -56,7 +56,7 @@ const MODES = [
   { id: "aggressive", label: "Aggressive", desc: "Max pace" },
 ] as const;
 
-const CHIPS = ["Don't cut the intro", "Keep my pauses", "Cut harder", "Target 30 seconds", "Add captions", "Make the captions blue", "Add subtle zooms", "Zoom on the key moments", "Make it energetic", "TikTok Shop style"];
+const CHIPS = ["Don't cut the intro", "Keep my pauses", "Cut harder", "Target 30 seconds", "Add captions", "Add subtle zooms", "Zoom on the key moments", "Make it energetic", "TikTok Shop style"];
 
 function fmtSecs(s: number): string {
   if (!isFinite(s) || s < 0) s = 0;
