@@ -119,7 +119,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
   const [comment, setComment] = useState("");
   const [feedbackSent, setFeedbackSent] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [plan, setPlan] = useState<{ id: string; name: string; batchSize: number; maxUploadMB: number; captions: boolean; instructions: boolean; zooms: boolean; bulkDownload: boolean } | null>(null);
+  const [plan, setPlan] = useState<{ id: string; name: string; batchSize: number; maxUploadMB: number; captions: boolean; instructions: boolean; zooms: boolean; bulkDownload: boolean; keelzStyle?: boolean } | null>(null);
   const [unacked, setUnacked] = useState<string[]>([]);
   const [supportReplies, setSupportReplies] = useState<{ id: string; message: string; reply: string }[]>([]);
   const [notice, setNotice] = useState("");
@@ -502,6 +502,16 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
               style={{ background: c === "white" ? "#fff" : c === "yellow" ? "#FFD400" : c === "blue" ? "#3DA5FF" : c === "green" ? "#3DFF88" : "#FF6BD6" }} />
           ))}
           {captionsOn && <span className="text-[10px] text-white/35">bold TikTok-style, burned in</span>}
+        </div>
+        {/* Keelz style - Unlimited-exclusive 3-point creator preset */}
+        <div className="mt-3">
+          <button type="button" disabled={busy}
+            title={plan && !plan.keelzStyle ? "Keelz style is an Unlimited-plan feature" : "3 punch-in zooms (start / key moment / end) + captions"}
+            onClick={() => { if (plan && !plan.keelzStyle) { setNotice("Keelz style is an Unlimited-plan feature - upgrade to unlock it."); return; } setInstructions((v) => (v ? v + " Keelz style." : "Keelz style.")); }}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${plan && !plan.keelzStyle ? "border-white/10 text-white/40" : "border-fuchsia-400/50 bg-fuchsia-500/10 text-fuchsia-100 hover:bg-fuchsia-500/20"}`}>
+            {plan && !plan.keelzStyle ? "★ Keelz style (Unlimited)" : "★ Keelz style"}
+          </button>
+          <span className="ml-2 text-[10px] text-white/35">pro creator look: 3 punch zooms + captions</span>
         </div>
       </div>
 
