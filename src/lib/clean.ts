@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.7";
+export const ENGINE_VERSION = "7.5.8";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -703,19 +703,19 @@ function planZooms(
   return { picks, notes };
 }
 
-// TikTok-style punch-in: the zoomed segment is cropped to 1/scale and
-// scaled back up, so the whole segment plays visibly magnified from the
-// cut. Static crop+scale math is deterministic on every input format -
-// zoompan's frame/time variables (on, in, pzoom, it) all proved
-// unreliable on real video and produced invisible ramps (pixel-verified
-// with frame probes). Even dimensions keep the encoder happy.
-function zoomFilter(scale: number, segDur: number, fps: number, fpsStr: string, w: number, h: number): string {
-  const cw = Math.max(2, Math.round(w / scale / 2) * 2);
-  const ch = Math.max(2, Math.round(h / scale / 2) * 2);
-  const x = Math.max(0, Math.round((w - cw) / 2));
-  const y = Math.max(0, Math.round((h - ch) / 2));
-  return "crop=" + cw + ":" + ch + ":" + x + ":" + y + ",scale=" + w + ":" + h;
+// TikTok-style punch-in, RELATIVE to the actual decoded frame (scale up,
+// then centre-crop back) so it never mismatches getDims. setsar=1 makes
+// the output SAR match the untouched segments - without it, concat rejects
+// real phone/webm footage (odd source SAR) with a -22 reinit error and the
+// whole effect render silently falls back to a plain cut. Pixel-verified.
+function zoomFilter(scale: number, _segDur: number, _fps: number, _fpsStr: string, _w: number, _h: number): string {
+  const s = scale.toFixed(4);
+  return (
+    "scale=w=ceil(iw*" + s + "/2)*2:h=ceil(ih*" + s + "/2)*2," +
+    "crop=w=floor(iw/" + s + "/2)*2:h=floor(ih/" + s + "/2)*2,setsar=1"
+  );
 }
+
 
 
 
@@ -777,7 +777,7 @@ async function renderFinal(
   S.forEach(([a, b], i) => {
     const zm = hasZooms ? zooms!.find((z) => z.seg === i) : undefined;
     const zf = zm ? "," + zoomFilter(zm.scale, b - a, fps, fpsStr, w, h) : "";
-    f += `[0:v]trim=${a.toFixed(4)}:${b.toFixed(4)},setpts=PTS-STARTPTS${zf}[v${i}];`;
+    f += `[0:v]trim=${a.toFixed(4)}:${b.toFixed(4)},setpts=PTS-STARTPTS${zf},setsar=1[v${i}];`;
     if (hasAudio) f += `[0:a]atrim=${a.toFixed(4)}:${b.toFixed(4)},asetpts=PTS-STARTPTS[a${i}];`;
   });
   S.forEach((_, i) => (f += hasAudio ? `[v${i}][a${i}]` : `[v${i}]`));
