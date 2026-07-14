@@ -29,6 +29,7 @@ export interface Plan {
   regensPerEdit: number;     // regenerations allowed per edit (0 = none)
   bulkDownload: boolean;     // "download all" for completed batches
   llmInstructions: boolean;  // Edit Instructions v2 (LLM) when it ships
+  keelzStyle: boolean;       // "Keelz style" 3-point creator preset (Unlimited-only)
   allFutureFeatures: boolean;
 
   // ---- processing ----
@@ -45,7 +46,7 @@ export const PLANS: Record<PlanId, Plan> = {
     priceEnvVar: null,
     edits: 5, fairUseSoftCap: null, batchSize: 2, maxVideoMin: 5, maxUploadMB: 250,
     captions: false, instructions: false, zooms: false,
-    regensPerEdit: 0, bulkDownload: false, llmInstructions: false, allFutureFeatures: false,
+regensPerEdit: 0, bulkDownload: false, llmInstructions: false, keelzStyle: false, allFutureFeatures: false,
     priority: 0, slots: 1, retentionHours: 24,
     features: [
       "5 TrimIQ edits / month",
@@ -59,7 +60,7 @@ export const PLANS: Record<PlanId, Plan> = {
     priceEnvVar: "STRIPE_PRICE_STARTER",
     edits: 80, fairUseSoftCap: null, batchSize: 5, maxVideoMin: 15, maxUploadMB: 1024,
     captions: true, instructions: true, zooms: false,
-    regensPerEdit: 3, bulkDownload: true, llmInstructions: false, allFutureFeatures: false,
+regensPerEdit: 3, bulkDownload: true, llmInstructions: false, keelzStyle: false, allFutureFeatures: false,
     priority: 1, slots: 1, retentionHours: 72,
     features: [
       "80 TrimIQ edits / month",
@@ -75,7 +76,7 @@ export const PLANS: Record<PlanId, Plan> = {
     priceEnvVar: "STRIPE_PRICE_PRO",
     edits: 250, fairUseSoftCap: null, batchSize: 10, maxVideoMin: 30, maxUploadMB: 2048,
     captions: true, instructions: true, zooms: true,
-    regensPerEdit: 10, bulkDownload: true, llmInstructions: true, allFutureFeatures: false,
+regensPerEdit: 10, bulkDownload: true, llmInstructions: true, keelzStyle: false, allFutureFeatures: false,
     priority: 2, slots: 2, retentionHours: 72,
     features: [
       "250 TrimIQ edits / month",
@@ -91,7 +92,7 @@ export const PLANS: Record<PlanId, Plan> = {
     priceEnvVar: "STRIPE_PRICE_UNLIMITED",
     edits: Infinity, fairUseSoftCap: 800, batchSize: 20, maxVideoMin: 60, maxUploadMB: 4096,
     captions: true, instructions: true, zooms: true,
-    regensPerEdit: Infinity, bulkDownload: true, llmInstructions: true, allFutureFeatures: true,
+regensPerEdit: Infinity, bulkDownload: true, llmInstructions: true, keelzStyle: true, allFutureFeatures: true,
     priority: 3, slots: 3, retentionHours: 168,
     features: [
       "Fair-use unlimited edits",
@@ -129,7 +130,7 @@ export const CREATOR_BETA_PLAN: Plan = {
   priceEnvVar: null,
   edits: 15, fairUseSoftCap: null, batchSize: 10, maxVideoMin: 15, maxUploadMB: 2048,
   captions: true, instructions: true, zooms: true,
-  regensPerEdit: 10, bulkDownload: true, llmInstructions: true, allFutureFeatures: true,
+regensPerEdit: 10, bulkDownload: true, llmInstructions: true, keelzStyle: true, allFutureFeatures: true,
   priority: 2, slots: 2, retentionHours: 72,
   features: ["Every premium feature", "15 edits / month", "Videos up to 15 min"],
 };
@@ -183,6 +184,10 @@ export function applyPlanGates<T extends { captions?: unknown; zoom?: unknown }>
   if (!p.zooms && out.zoom) {
     delete out.zoom;
     locked.push("Smart zoom effects (Pro and up)");
+  } else if (out.zoom && (out.zoom as { keelz?: boolean }).keelz && !p.keelzStyle) {
+    // Keelz preset is Unlimited-only; downgrade to normal zooms for others.
+    delete (out.zoom as { keelz?: boolean }).keelz;
+    locked.push("Keelz style is an Unlimited-plan feature");
   }
   return { overrides: out, locked };
 }
@@ -204,7 +209,8 @@ export function planSummary(plan: Plan | string) {
     batchSize: p.batchSize, maxVideoMin: p.maxVideoMin, maxUploadMB: p.maxUploadMB,
     captions: p.captions, instructions: p.instructions, zooms: p.zooms,
     regensPerEdit: isFinite(p.regensPerEdit) ? p.regensPerEdit : null,
-    bulkDownload: p.bulkDownload, priority: p.priority, slots: p.slots,
+bulkDownload: p.bulkDownload, priority: p.priority, slots: p.slots,
+    keelzStyle: p.keelzStyle,
     retentionHours: p.retentionHours,
   };
 }
