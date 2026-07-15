@@ -54,7 +54,7 @@ export default function TikTokPixel() {
   return (
     <>
       {/* Official TikTok base pixel, injected in-code so it's in the page source. */}
-      <Script id="tiktok-pixel-base" strategy="afterInteractive">
+      <Script id="tiktok-pixel-base" strategy="beforeInteractive">
         {`
 !function (w, d, t) {
   w.TiktokAnalyticsObject = t;
