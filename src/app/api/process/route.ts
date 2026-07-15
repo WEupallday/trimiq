@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { unlink, mkdtemp, stat, mkdir, readdir } from "node:fs/promises";
+import { unlink, mkdtemp, stat, mkdir, readdir, open } from "node:fs/promises";
 import { createWriteStream, createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -505,6 +505,19 @@ export async function POST(req: NextRequest) {
     await mkdir(gdir, { recursive: true });
     const index = String(Math.max(0, parseInt(req.nextUrl.searchParams.get("index") || "0", 10) || 0)).padStart(4, "0");
     const clipPath = join(gdir, index + "-clip.mp4");
+    // Chunked upload: write this part at the given byte offset. Idempotent on
+    // retry (same offset overwrites) so a dropped chunk just re-sends — the
+    // whole transfer survives flaky connections and any proxy/idle timeout.
+    const _chunk = req.nextUrl.searchParams.get("chunk");
+    if (_chunk !== null) {
+      const _off = Math.max(0, parseInt(req.nextUrl.searchParams.get("offset") || "0", 10) || 0);
+      const _buf = Buffer.from(await req.arrayBuffer());
+      if (_off + _buf.length > 4 * 1024 * 1024 * 1024) return NextResponse.json({ error: "That clip is too large." }, { status: 413 });
+      const _fh = await open(clipPath, _off === 0 ? "w" : "r+");
+      try { await _fh.write(_buf, 0, _buf.length, _off); } finally { await _fh.close(); }
+      const _st = await stat(clipPath).catch(() => null);
+      return NextResponse.json({ ok: true, size: _st ? _st.size : _off + _buf.length });
+    }
     await pipeline(Readable.fromWeb(req.body as any), createWriteStream(clipPath));
     return NextResponse.json({ ok: true });
   }
