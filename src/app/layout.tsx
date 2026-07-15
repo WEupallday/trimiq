@@ -13,24 +13,12 @@ const GTM_ID = "GTM-T2MVNBDL";
 // authoritative Events Manager ID.
 const TT_PIXEL_ID = process.env.NEXT_PUBLIC_TIKTOK_PIXEL_ID || "D9BS13JC77UBS5FSCTT0";
 
-export const metadata: Metadata = {
-  title: "TrimIQ — Turn raw clips into publish-ready videos",
-  description:
-    "TrimIQ automatically removes dead space, long pauses, filler words, and bad takes from your videos - then adds captions and smart zooms. Upload, click once, download an edit ready for TikTok, Reels & Shorts.",
-};
-
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
-  return (
-    <html lang="en">
-      {/* TikTok base pixel — injected in the ROOT LAYOUT with beforeInteractive
-          so the exact ttq snippet is emitted into the <head> of the served HTML.
-          TikTok's "detect base code" scans the page head, so this is the reliable
-          install. Loads once + fires the initial PageView; SPA route-change
-          PageViews are handled by <TikTokPixel /> below. */}
-      <Script id="tiktok-pixel-base" strategy="beforeInteractive">
-        {`!function (w, d, t) {
+// Exact TikTok base-code snippet. Rendered as a raw inline <script> inside a
+// manual <head> below so it sits AT THE TOP OF THE <head> in the served HTML —
+// TikTok's "detect base code" scans the page head. It defines window.ttq,
+// loads the pixel once, and fires the initial PageView. SPA route-change
+// PageViews are handled by <TikTokPixel /> in the body.
+const TIKTOK_BASE = `!function (w, d, t) {
   w.TiktokAnalyticsObject = t;
   var ttq = w[t] = w[t] || [];
   ttq.methods = ["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie","holdConsent","revokeConsent","grantConsent"];
@@ -47,8 +35,23 @@ export default function RootLayout({
   };
   ttq.load('${TT_PIXEL_ID}');
   ttq.page();
-}(window, document, 'ttq');`}
-      </Script>
+}(window, document, 'ttq');`;
+
+export const metadata: Metadata = {
+  title: "TrimIQ — Turn raw clips into publish-ready videos",
+  description:
+    "TrimIQ automatically removes dead space, long pauses, filler words, and bad takes from your videos - then adds captions and smart zooms. Upload, click once, download an edit ready for TikTok, Reels & Shorts.",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
+  return (
+    <html lang="en">
+      <head>
+        {/* TikTok base pixel — first thing in <head> of the served HTML. */}
+        <script id="tiktok-pixel-base" dangerouslySetInnerHTML={{ __html: TIKTOK_BASE }} />
+      </head>
       {/* Google Tag Manager (kept installed for future tags) */}
       <Script id="gtm-init" strategy="afterInteractive">
         {`(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','${GTM_ID}');`}
