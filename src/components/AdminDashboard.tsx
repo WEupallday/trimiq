@@ -120,7 +120,9 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
         Live · auto-updates every 30s{updatedAt ? ` · last ${updatedAt}` : ""}
       </div>
 
-      {/* Top stats */}
+      <LiveOps />
+
+        {/* Top stats */}
       <Section title="Overview">
         <Grid>
           <Stat label="Total users" value={s.totalUsers} />
@@ -437,6 +439,140 @@ function MiniChart({
 // Lightweight support inbox: tickets from the in-app widget, with the
 // requester’s account info. Replies are delivered to the user as an in-app
 // notification (dashboard poller); Discord stays the one-way new-ticket ping.
+// Live operations: real-time-ish ops monitoring (users online, jobs, RAM,
+// failed renders, render times). Self-contained + polls every 5s like the
+// support inbox. Admin-only (server enforces via requireAdmin).
+function LiveOps() {
+  const [d, setD] = useState<any>(null);
+  const [updated, setUpdated] = useState("");
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/process?admin=liveops", { cache: "no-store" });
+      if (!res.ok) return;
+      const j = await res.json();
+      setD(j);
+      setUpdated(new Date().toLocaleTimeString());
+    } catch {
+      /* keep last good */
+    }
+  }, []);
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const fmtMs = (ms: number) => (ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : Math.round(ms) + "ms");
+  const timeAgo = (iso: string) => {
+    const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    return s < 60 ? s + "s ago" : s < 3600 ? Math.round(s / 60) + "m ago" : Math.round(s / 3600) + "h ago";
+  };
+
+  if (!d) {
+    return (
+      <Section title="Live operations">
+        <p className="text-sm text-white/40">Loading live stats…</p>
+      </Section>
+    );
+  }
+
+  const ramPct = Math.min(100, d.ram?.pct ?? 0);
+  const ramColor = ramPct >= 85 ? "#f87171" : ramPct >= 65 ? "#fbbf24" : "#34d399";
+
+  return (
+    <section>
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Live operations</h2>
+        <span className="flex items-center gap-2 text-xs text-white/40">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+          live · every 5s{updated ? ` · ${updated}` : ""}
+        </span>
+      </div>
+
+      <Grid>
+        <Stat label="Users online (5m)" value={d.usersOnline} accent />
+        <Stat label="Processing now" value={d.processing} />
+        <Stat label="Queue waiting" value={d.queued} />
+        <Stat label="Active jobs" value={d.activeJobs} accent />
+        <Stat label="Edits today" value={d.editsToday} />
+        <Stat label="Failed today" value={d.failedToday} />
+        <Stat label="Avg render today" value={d.renderTimes?.doneToday ? fmtMs(d.renderTimes.avgTodayMs) : "—"} />
+        <Stat label="Active testers today" value={d.activeTestersToday} accent />
+      </Grid>
+
+      {/* RAM gauge — the number that actually trips the OOM limit */}
+      <div className="glass mt-3 rounded-xl p-4">
+        <div className="mb-1.5 flex items-baseline justify-between text-xs">
+          <span className="font-medium text-white/70">Instance memory (RSS)</span>
+          <span className="text-white/50">
+            {d.ram?.rssMB} MB / {d.ram?.limitMB} MB · {d.ram?.pct}%
+          </span>
+        </div>
+        <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full transition-all duration-500" style={{ width: ramPct + "%", background: ramColor }} />
+        </div>
+        <p className="mt-1.5 text-[10px] text-white/30">
+          heap {d.ram?.heapUsedMB}/{d.ram?.heapTotalMB} MB · {d.ram?.limitMB} MB instance · a single render past the limit OOM-kills the box
+        </p>
+      </div>
+
+      {/* What is rendering right now */}
+      {d.activeList && d.activeList.length > 0 && (
+        <div className="glass mt-3 rounded-xl p-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">Active jobs ({d.activeList.length})</p>
+          <div className="space-y-1.5">
+            {d.activeList.map((j: any, i: number) => (
+              <div key={i} className="flex items-center justify-between gap-3 text-xs">
+                <span className="truncate text-white/80">{j.name}</span>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 ${j.status === "processing" ? "bg-indigo-500/15 text-indigo-200" : "bg-white/10 text-white/50"}`}>
+                  {j.stage || j.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent render times + recent failures */}
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <div className="glass rounded-xl p-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">Recent render times</p>
+          {d.renderTimes?.recent?.length ? (
+            <div className="space-y-1.5">
+              {d.renderTimes.recent.map((r: any, i: number) => (
+                <div key={i} className="flex items-center justify-between gap-3 text-xs">
+                  <span className="truncate text-white/70">{r.name}</span>
+                  <span className="shrink-0 text-white/40">{fmtMs(r.ms)} · {timeAgo(r.at)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-white/30">No completed renders yet.</p>
+          )}
+        </div>
+        <div className="glass rounded-xl p-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">Recent failed renders</p>
+          {d.recentFailures && d.recentFailures.length ? (
+            <div className="space-y-1.5">
+              {d.recentFailures.map((f: any, i: number) => (
+                <div key={i} className="text-xs">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate text-white/70">{f.name} · {f.email}</span>
+                    <span className="shrink-0 text-white/30">{timeAgo(f.at)}</span>
+                  </div>
+                  <p className="truncate text-red-300/80">{f.error}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-white/30">No failed renders. All clear.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SupportInbox() {
   const [tickets, setTickets] = useState<
     { id: string; email: string | null; username: string | null; plan: string | null; message: string; page: string | null; reply: string | null; status: string; createdAt: string }[]
