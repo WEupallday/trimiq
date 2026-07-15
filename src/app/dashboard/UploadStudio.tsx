@@ -80,6 +80,62 @@ const STAGE_PCT: Record<string, number> = {
   Done: 100,
 };
 
+
+// Real engine stages (see clean.ts stage() calls). Progress is never faked:
+// each checklist row is checked only once the engine-reported stage passes it.
+// Caption / zoom rows appear only when those features run for THIS job.
+const STAGE_RANK: Record<string, number> = {
+  Uploading: 0, "Uploading clips": 0, Starting: 0,
+  Queued: 1, Combining: 1,
+  Analyzing: 2,
+  "Detecting pauses": 3,
+  Rendering: 4,
+  Finalizing: 5,
+  Done: 6,
+};
+function stageRank(s: string): number { return STAGE_RANK[s] ?? 0; }
+type StageStep = { label: string; doneAt: number };
+function buildStageSteps(o: { combine: boolean; captions: boolean; zooms: boolean }): StageStep[] {
+  const steps: StageStep[] = [];
+  steps.push({ label: o.combine ? "Uploading & combining your clips" : "Uploading your video", doneAt: 2 });
+  steps.push({ label: "Analyzing your footage", doneAt: 3 });
+  steps.push({ label: "Detecting the important moments", doneAt: 3 });
+  steps.push({ label: "Removing pauses & filler words", doneAt: 4 });
+  steps.push({ label: "Selecting the best takes", doneAt: 4 });
+  if (o.captions) steps.push({ label: "Creating captions", doneAt: 5 });
+  if (o.zooms) steps.push({ label: "Applying your zoom effects", doneAt: 5 });
+  steps.push({ label: "Editing & rendering your video", doneAt: 5 });
+  steps.push({ label: "Finalizing your download", doneAt: 6 });
+  return steps;
+}
+function StageChecklist({ stage, combine, captions, zooms }: { stage: string; combine: boolean; captions: boolean; zooms: boolean }) {
+  const rank = stageRank(stage);
+  const steps = buildStageSteps({ combine, captions, zooms });
+  const activeIdx = steps.findIndex((s) => rank < s.doneAt);
+  return (
+    <ul className="mt-3 space-y-1.5">
+      {steps.map((s, i) => {
+        const done = rank >= s.doneAt;
+        const act = !done && i === activeIdx;
+        return (
+          <li key={s.label} className={`flex items-center gap-2.5 text-xs transition ${done ? "text-emerald-300" : act ? "text-white" : "text-white/30"}`}>
+            <span className="grid h-4 w-4 shrink-0 place-items-center">
+              {done ? (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+              ) : act ? (
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/25 border-t-white" />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full bg-white/20" />
+              )}
+            </span>
+            <span className={act ? "font-medium" : ""}>{s.label}{act ? "…" : ""}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 const MAX_UPLOAD_MB = 500;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -545,7 +601,7 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
               className={`h-6 w-6 rounded-full border-2 transition ${captionColor === c ? "border-indigo-400" : "border-white/15"}`}
               style={{ background: c === "white" ? "#fff" : c === "yellow" ? "#FFD400" : c === "blue" ? "#3DA5FF" : c === "green" ? "#3DFF88" : "#FF6BD6" }} />
           ))}
-          {captionsOn && <span className="text-[10px] text-white/35">bold TikTok-style, burned in</span>}
+          {captionsOn && <span className="text-[10px] text-white/35">bold, burned-in — TikTok, Reels & Shorts</span>}
         </div>
         {/* Keelz style - Unlimited-exclusive 3-point creator preset */}
         <div className="mt-3">
@@ -710,6 +766,9 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
                       Delete
                     </button>
                   </div>
+                )}
+                {active && (
+                  <StageChecklist stage={item.stage} combine={combine} captions={captionsOn || /caption|subtitle/i.test(instructions)} zooms={/zoom|keelz|energetic|punch/i.test(instructions)} />
                 )}
                 {item.status === "done" && item.stats && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-white/50">
