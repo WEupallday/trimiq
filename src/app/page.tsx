@@ -69,7 +69,7 @@ export default async function Home() {
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-white/60">
           TrimIQ removes silence, filler words and bad takes, burns in captions,
-          adds smart zooms, and hands back a clean, TikTok-ready edit in minutes &mdash;
+          adds smart zooms, and hands back a clean, ready-to-post edit for TikTok, Reels & Shorts in minutes &mdash;
           one video or a whole batch while you do something else.
         </p>
         <div className="mt-9 flex flex-wrap items-center justify-center gap-4">
@@ -223,7 +223,7 @@ export default async function Home() {
             {
               n: "3",
               title: "Export & post",
-              body: "Review what changed, regenerate with different settings if you like, then download \u2014 full resolution, ready for TikTok.",
+              body: "Review what changed, regenerate with different settings if you like, then download \u2014 full resolution, ready for TikTok, Reels & Shorts.",
               foot: "No watermark \u00b7 download one or all",
             },
           ].map((s) => (
@@ -264,7 +264,7 @@ export default async function Home() {
             { t: "Flexible downloads", b: "Grab videos one at a time or everything completed at once." },
             { t: "Review page", b: "Before/after player, cut timeline, transcript with removed words." },
             { t: "Regenerate", b: "New style or instructions without re-uploading the original." },
-            { t: "TikTok-ready export", b: "Full resolution, exact framing, no watermark \u2014 ever." },
+            { t: "Multi-platform export", b: "Full resolution, exact framing, no watermark \u2014 ever." },
           ].map((f) => (
             <div key={f.t} className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition hover:border-indigo-400/25 hover:bg-white/[0.05]">
               <div className="mb-3 h-1.5 w-8 rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400" />
