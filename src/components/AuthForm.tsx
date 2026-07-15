@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Logo from "@/components/Logo";
+import { ttTrack } from "@/components/TikTokPixel";
 
 export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
@@ -29,6 +30,9 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
         const j = await res.json().catch(() => ({ error: "Something went wrong." }));
         throw new Error(j.error || "Something went wrong.");
       }
+      const okData = await res.json().catch(() => ({}));
+      // CompleteRegistration (browser side; deduped with the server via ttEventId).
+      if (isSignup && okData.ttEventId) ttTrack("CompleteRegistration", { content_name: "TrimIQ account" }, okData.ttEventId);
       router.push(isSignup ? "/onboarding" : "/dashboard");
       router.refresh();
     } catch (err) {
