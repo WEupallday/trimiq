@@ -19,7 +19,7 @@ import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
 // Bump on every engine behavior change — benchmark history is keyed by this.
-export const ENGINE_VERSION = "7.5.9";
+export const ENGINE_VERSION = "7.6.0";
 
 const FFMPEG = (ffmpegStatic as unknown as string) || "ffmpeg";
 const FFPROBE = ffprobeStatic.path || "ffprobe";
@@ -72,6 +72,7 @@ export type ZoomOptions = {
   target?: "product" | "speaker";
 phrases?: string[]; // "zoom in when I say X" - matched against the transcript
   keelz?: boolean;    // Keelz preset: exactly 3 punch zooms (start / key middle / end)
+  smooth?: boolean;   // glide the zoom in over ~1s instead of an instant punch
 };
 
 export type EditOverrides = {
@@ -614,7 +615,7 @@ function planZooms(
   segs: [number, number][],
   planInfo: { allWords: Word[]; mask: boolean[] } | null,
   z: ZoomOptions,
-): { picks: { seg: number; scale: number }[]; notes: string[] } {
+): { picks: { seg: number; scale: number; smooth?: boolean }[]; notes: string[] } {
   const notes: string[] = [];
   if (!z.enabled || !segs.length) return { picks: [], notes };
   const scale = ZOOM_SCALE[z.intensity || "medium"] || 1.18;
@@ -625,7 +626,7 @@ function planZooms(
   if (z.keelz) {
     const keelzScale = ZOOM_SCALE.strong; // noticeable, TikTok-style
     if (segs.length <= 3) {
-      return { picks: segs.map((_, i) => ({ seg: i, scale: keelzScale })), notes };
+      return { picks: segs.map((_, i) => ({ seg: i, scale: keelzScale, smooth: true })), notes };
     }
     const kept2 = planInfo ? planInfo.allWords.filter((_, i) => !planInfo.mask[i]) : [];
     const emph = /\b(amazing|incredible|insane|crazy|huge|free|secret|never|best|worst|stop|wait|listen|important|new|finally|you|need|check|watch|look|this)\b/i;
@@ -641,14 +642,14 @@ function planZooms(
       if (s > bestScore) { bestScore = s; bestSeg = i; }
     }
     const idxs = Array.from(new Set([0, bestSeg, segs.length - 1]));
-    return { picks: idxs.map((i) => ({ seg: i, scale: keelzScale })), notes };
+    return { picks: idxs.map((i) => ({ seg: i, scale: keelzScale, smooth: true })), notes };
   }
   // Explicit "zoom when I say X" and "key moments" requests default to the
   // strong punch - the user asked to SEE those zooms.
   const phraseScale = z.intensity ? scale : ZOOM_SCALE.strong;
   const autoScale = z.intensity ? scale : z.importantOnly ? ZOOM_SCALE.strong : scale;
   const kept = planInfo ? planInfo.allWords.filter((_, i) => !planInfo.mask[i]) : [];
-  const picks: { seg: number; scale: number }[] = [];
+  const picks: { seg: number; scale: number; smooth?: boolean }[] = [];
 
   // ---- Phrase-targeted zooms: "zoom in when I say X" ----------------------
   // Matched against the word-timed transcript (case-insensitive, punctuation-
@@ -679,7 +680,7 @@ function planZooms(
       }
       const tAt = kept[at].start;
       const si = segs.findIndex(([a, b]) => tAt >= a - 0.05 && tAt < b);
-      if (si >= 0 && !picks.some((p) => p.seg === si)) picks.push({ seg: si, scale: phraseScale });
+      if (si >= 0 && !picks.some((p) => p.seg === si)) picks.push({ seg: si, scale: phraseScale, smooth: !!z.smooth });
     }
     // Targeted mode: if any requested phrase was found, zoom exactly there.
     if (picks.length) return { picks, notes };
@@ -718,14 +719,14 @@ function planZooms(
       // Standout moments get the full punch; borderline ones a gentler push,
       // so back-to-back zooms don't all look identical.
       const punch = score >= need + 2 ? autoScale : 1 + (autoScale - 1) * 0.8;
-      picks.push({ seg: i, scale: Math.round(punch * 1000) / 1000 });
+picks.push({ seg: i, scale: Math.round(punch * 1000) / 1000, smooth: !!z.smooth });
       lastZoomEnd = outT + segDur;
     }
     outT += segDur;
   }
   // Zooms were requested: guarantee at least one, on the strongest suitable
   // segment, rather than silently doing nothing.
-  if (!picks.length && bestIdx >= 0) picks.push({ seg: bestIdx, scale: autoScale });
+  if (!picks.length && bestIdx >= 0) picks.push({ seg: bestIdx, scale: autoScale, smooth: !!z.smooth });
   return { picks, notes };
 }
 
@@ -759,7 +760,7 @@ function zoomFilter(scale: number, _segDur: number, _fps: number, _fpsStr: strin
 //     format and frame rate preserved; crf 18 is visually lossless.
 async function renderFinal(
   input: string, output: string, segs: [number, number][], _s: Settings, original: number, assPath: string | null,
-  zooms?: { seg: number; scale: number }[] | null,
+  zooms?: { seg: number; scale: number; smooth?: boolean }[] | null,
 ): Promise<boolean> {
   // No cuts at all -> remux unchanged (bit-exact, fast) unless captions must be burned in.
   const noCuts = segs.length === 1 && segs[0][0] <= 0.05 && segs[0][1] >= original - 0.05;
@@ -799,15 +800,44 @@ async function renderFinal(
   // Per-segment trim (video) + atrim (audio), each reset to start at 0, then the
   // concat filter joins them keeping A and V locked on one timeline.
   const hasAudio = await hasAudioStream(input);
-  let f = "";
+  // Expand kept segments into render UNITS. A "smooth" zoom segment becomes
+  // many tiny stepped-scale slices (a reliable, pixel-verified glide); snap
+  // zooms and plain segments are one unit each. Every unit is normalized to
+  // the exact output canvas (w x h) + setsar=1 so all concat inputs match.
+  type Unit = { a: number; b: number; z: number };
+  const units: Unit[] = [];
   S.forEach(([a, b], i) => {
     const zm = hasZooms ? zooms!.find((z) => z.seg === i) : undefined;
-    const zf = zm ? "," + zoomFilter(zm.scale, b - a, fps, fpsStr, w, h) : "";
-    f += `[0:v]trim=${a.toFixed(4)}:${b.toFixed(4)},setpts=PTS-STARTPTS${zf},setsar=1[v${i}];`;
-    if (hasAudio) f += `[0:a]atrim=${a.toFixed(4)}:${b.toFixed(4)},asetpts=PTS-STARTPTS[a${i}];`;
+    if (zm && (zm as { smooth?: boolean }).smooth && b - a > 0.25) {
+      const ramp = Math.max(0.5, Math.min(1.2, (b - a) * 0.5));
+      const N = Math.max(6, Math.min(20, Math.round(ramp / 0.08)));
+      const step = ramp / N;
+      for (let k = 0; k < N; k++) {
+        const p = Math.min((k + 1) / N, 1);
+        const e = p * p * (3 - 2 * p); // smoothstep ease
+        const z = 1 + (zm.scale - 1) * e;
+        const ua = a + k * step;
+        const ub = Math.min(b, a + (k + 1) * step);
+        if (ub - ua > 0.008) units.push({ a: ua, b: ub, z });
+      }
+      if (a + ramp < b - 0.008) units.push({ a: a + ramp, b, z: zm.scale }); // hold at full
+    } else if (zm) {
+      units.push({ a, b, z: zm.scale }); // instant punch
+    } else {
+      units.push({ a, b, z: 1 });
+    }
   });
-  S.forEach((_, i) => (f += hasAudio ? `[v${i}][a${i}]` : `[v${i}]`));
-  f += `concat=n=${S.length}:v=1:a=${hasAudio ? 1 : 0}${hasAudio ? "[cv][a]" : "[cv]"}`;
+  // Zoom = crop a centred window (relative to the real frame, so no getDims
+  // mismatch) then scale it up to the canvas. z=1 is a plain normalize.
+  const zwin = (z: number) =>
+    z > 1.001 ? "crop=w=floor(iw/" + z.toFixed(5) + "/2)*2:h=floor(ih/" + z.toFixed(5) + "/2)*2," : "";
+  let f = "";
+  units.forEach((u, i) => {
+    f += `[0:v]trim=${u.a.toFixed(4)}:${u.b.toFixed(4)},setpts=PTS-STARTPTS,${zwin(u.z)}scale=${w}:${h},setsar=1[v${i}];`;
+    if (hasAudio) f += `[0:a]atrim=${u.a.toFixed(4)}:${u.b.toFixed(4)},asetpts=PTS-STARTPTS[a${i}];`;
+  });
+  units.forEach((_, i) => (f += hasAudio ? `[v${i}][a${i}]` : `[v${i}]`));
+  f += `concat=n=${units.length}:v=1:a=${hasAudio ? 1 : 0}${hasAudio ? "[cv][a]" : "[cv]"}`;
   f += assPath ? `;[cv]subtitles=${assPath}[v]` : `;[cv]null[v]`;
 
   const args = ["-y", "-i", input, "-filter_complex", f, "-map", "[v]"];
@@ -973,7 +1003,7 @@ export async function cleanVideo(
   }
 
   // AI zooms (optional; the engine picks the moments).
-  let zoomPlan: { seg: number; scale: number }[] = [];
+  let zoomPlan: { seg: number; scale: number; smooth?: boolean }[] = [];
   let zoomInfo: { count: number; intensity: string; frequency: string; notes?: string[] } | null = null;
   if (ov.zoom && ov.zoom.enabled) {
     const planned = planZooms(segs, planInfo, ov.zoom);
