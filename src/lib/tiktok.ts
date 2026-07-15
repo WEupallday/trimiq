@@ -19,7 +19,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 const API_URL = "https://business-api.tiktok.com/open_api/v1.3/event/track/";
-const DEFAULT_PIXEL_ID = "D9BOMKJC77U7PB56RM50";
+const DEFAULT_PIXEL_ID = "D9BS13JC77UBS5FSCTT0";
 
 export function ttPixelId(): string {
   return (process.env.NEXT_PUBLIC_TIKTOK_PIXEL_ID || DEFAULT_PIXEL_ID).trim();
