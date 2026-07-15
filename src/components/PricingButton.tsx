@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { ttTrack } from "@/components/TikTokPixel";
 import { useRouter } from "next/navigation";
 
+let ttViewContentFired = false; // fire ViewContent once per page load
 export default function PricingButton({
   planId,
   label,
@@ -17,6 +19,13 @@ export default function PricingButton({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  // ViewContent: pricing seen (browser-only; no server dedup needed).
+  useEffect(() => {
+    if (ttViewContentFired) return;
+    ttViewContentFired = true;
+    ttTrack("ViewContent", { content_type: "product", content_name: "Pricing" });
+  }, []);
 
   async function go() {
     setErr("");
@@ -36,6 +45,8 @@ export default function PricingButton({
         body: JSON.stringify({ planId }),
       });
       const data = await res.json().catch(() => ({}));
+      // InitiateCheckout (browser side; deduped with the server via ttEventId).
+      if (data.ttEventId) ttTrack("InitiateCheckout", { content_name: label, plan: planId }, data.ttEventId);
       if (data.url) {
         window.location.href = data.url;
         return;
