@@ -71,7 +71,7 @@ export async function POST(req: Request) {
       externalId: user.id,
       ip: xf.split(",")[0].trim() || req.headers.get("x-real-ip") || null,
       userAgent: req.headers.get("user-agent"),
-      referrer: req.headers.get("referer"),
+      referrer: req.headers.get("referer") || undefined,
       ttp: readCookie(req, "_ttp"),
       ttclid: readCookie(req, "ttclid"),
       properties: { content_name: "TrimIQ account", status: "registered" },
