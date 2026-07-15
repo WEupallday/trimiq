@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import Link from "next/link";
 import SupportWidget from "@/components/SupportWidget";
+import TikTokPixel from "@/components/TikTokPixel"; // <-- ADDED
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -18,6 +19,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} font-sans bg-ink text-white antialiased`}>
+        <TikTokPixel /> {/* <-- ADDED: loads globally, inits once, fires page() on route changes */}
         {children}
         <footer className="relative z-10 border-t border-white/10 px-6 py-6 text-center text-xs text-white/35">
           <span>© {new Date().getFullYear()} TrimIQ</span>
