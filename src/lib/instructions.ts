@@ -218,6 +218,7 @@ export function parseInstructions(text: string): ParsedInstructions {
           z.phrases = [...(z.phrases || []), phrase];
           applied.push('Zoom when you say "' + phrase + '"');
         }
+        if (/\bsmooth\b|\bslide\b|\bglide\b|gradual|slowly|ease/.test(p)) (z as { smooth?: boolean }).smooth = true;
         if (/subtle|slight|gentle|soft|light|small/.test(p)) z.intensity = "subtle";
         else if (/aggressive|strong|hard|dramatic|crash|big|intense/.test(p)) z.intensity = "strong";
         if (/frequent|lots|many|constant|every|tons/.test(p)) z.frequency = "high";
