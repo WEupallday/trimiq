@@ -3,8 +3,16 @@ import { prisma } from "@/lib/db";
 import { hashPassword, createSessionToken, SESSION_COOKIE } from "@/lib/auth";
 import { notify } from "@/lib/notify";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
+import { sendTikTokEvent, newEventId } from "@/lib/tiktok"; // <-- ADDED
 
 export const runtime = "nodejs";
+
+// Tiny cookie reader for a plain Request (no NextRequest.cookies here).
+function readCookie(req: Request, name: string): string | null {
+  const raw = req.headers.get("cookie") || "";
+  const m = raw.match(new RegExp("(?:^|; )" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=([^;]*)"));
+  return m ? decodeURIComponent(m[1]) : null;
+}
 
 export async function POST(req: Request) {
   try {
@@ -51,8 +59,26 @@ export async function POST(req: Request) {
     // Founder notification (fire-and-forget; never blocks signup).
     void notify("signup", { email: user.email, username: uname });
 
+    // ---- TikTok CompleteRegistration (server side, deduped with the pixel) ----
+    // Generate the shared id here, send the server event, and hand the id back
+    // so the browser fires the SAME event_id. Never awaited on the hot path.
+    const ttEventId = newEventId();
+    const xf = req.headers.get("x-forwarded-for") || "";
+    void sendTikTokEvent({
+      event: "CompleteRegistration",
+      event_id: ttEventId,
+      email: user.email,
+      externalId: user.id,
+      ip: xf.split(",")[0].trim() || req.headers.get("x-real-ip") || null,
+      userAgent: req.headers.get("user-agent"),
+      referrer: req.headers.get("referer"),
+      ttp: readCookie(req, "_ttp"),
+      ttclid: readCookie(req, "ttclid"),
+      properties: { content_name: "TrimIQ account", status: "registered" },
+    });
+
     const token = await createSessionToken({ userId: user.id, email: user.email });
-    const res = NextResponse.json({ ok: true });
+    const res = NextResponse.json({ ok: true, ttEventId }); // <-- ttEventId returned for pixel dedup
     res.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,
       secure: true,
