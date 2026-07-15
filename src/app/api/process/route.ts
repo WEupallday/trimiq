@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { unlink, mkdtemp, stat } from "node:fs/promises";
+import { unlink, mkdtemp, stat, mkdir, readdir } from "node:fs/promises";
 import { createWriteStream, createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { cleanVideo, type EditMode } from "@/lib/clean";
 import { parseInstructions } from "@/lib/instructions";
+import { normalizeConcat } from "@/lib/stitch";
 import { track } from "@/lib/analytics";
 import {
   createJob, getJob, removeJob, persistJob, listJobsMerged, ackBatch,
@@ -454,9 +455,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  // Multi-clip stitching: collect ONE clip into a per-user group folder. The
+  // client uploads each clip here, then calls ?stitchRun to combine + edit.
+  const stitchGroup = req.nextUrl.searchParams.get("stitch");
+  if (stitchGroup) {
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: "Please log in." }, { status: 401 });
+    if (!req.body) return NextResponse.json({ error: "No clip received." }, { status: 400 });
+    const key = createHash("sha256").update(session.email + ":" + stitchGroup).digest("hex").slice(0, 32);
+    const gdir = join(tmpdir(), "trimiq-stitch-" + key);
+    await mkdir(gdir, { recursive: true });
+    const index = String(Math.max(0, parseInt(req.nextUrl.searchParams.get("index") || "0", 10) || 0)).padStart(4, "0");
+    const clipPath = join(gdir, index + "-clip.mp4");
+    await pipeline(Readable.fromWeb(req.body as any), createWriteStream(clipPath));
+    return NextResponse.json({ ok: true });
+  }
+
   let inPath = "";
   try {
-    if (!req.body && !req.nextUrl.searchParams.get("reedit")) {
+    if (!req.body && !req.nextUrl.searchParams.get("reedit") && !req.nextUrl.searchParams.get("stitchRun")) {
       return NextResponse.json({ error: "No video received. Please choose a file and try again." }, { status: 400 });
     }
     const session = await getSession();
@@ -532,19 +549,40 @@ export async function POST(req: NextRequest) {
       reusedInput = prev.inputPath;
     }
 
+    // Multi-clip stitching: combine the collected clips into ONE normalized
+    // video, then edit it as a single timeline (one job, one credit).
+    let stitchInput: string | null = null;
+    const stitchRunGroup = req.nextUrl.searchParams.get("stitchRun");
+    if (stitchRunGroup) {
+      const skey = createHash("sha256").update(session.email + ":" + stitchRunGroup).digest("hex").slice(0, 32);
+      const sgdir = join(tmpdir(), "trimiq-stitch-" + skey);
+      const clips = (await readdir(sgdir).catch(() => [] as string[]))
+        .filter((f) => f.endsWith("-clip.mp4")).sort();
+      if (clips.length < 2) {
+        return NextResponse.json({ error: "Combining needs at least two clips - please add more." }, { status: 400 });
+      }
+      if (clips.length > planCfg.batchSize) {
+        return NextResponse.json({ error: `Your ${planCfg.name} plan allows up to ${planCfg.batchSize} clips per combined video.`, upgrade: true }, { status: 403 });
+      }
+      const cdir = await mkdtemp(join(tmpdir(), "trimiq-"));
+      stitchInput = join(cdir, randomUUID() + "-combined.mp4");
+      await normalizeConcat(clips.map((f) => join(sgdir, f)), stitchInput);
+      await Promise.all(clips.map((f) => unlink(join(sgdir, f)).catch(() => {})));
+    }
+
     const dir = await mkdtemp(join(tmpdir(), "trimiq-"));
     const id = randomUUID();
-    inPath = reusedInput || join(dir, `${id}-in.mp4`);
+    inPath = reusedInput || stitchInput || join(dir, `${id}-in.mp4`);
     const outPath = join(dir, `${id}-out.mp4`);
 
-    if (!reusedInput) await pipeline(Readable.fromWeb(req.body as any), createWriteStream(inPath));
+    if (!reusedInput && !stitchInput) await pipeline(Readable.fromWeb(req.body as any), createWriteStream(inPath));
 
     const { size } = await stat(inPath);
     if (size < 1024) {
       await unlink(inPath).catch(() => {});
       return NextResponse.json({ error: "That file looks empty or didn't upload fully. Please try again." }, { status: 400 });
     }
-    if (size > maxUploadBytesFor(planCfg)) {
+    if (!stitchInput && size > maxUploadBytesFor(planCfg)) {
       await unlink(inPath).catch(() => {});
       return NextResponse.json(
         { error: `That video is too large for your ${planCfg.name} plan (max ${planCfg.maxUploadMB} MB). Upgrade for bigger uploads.` },
