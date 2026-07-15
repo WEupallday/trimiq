@@ -36,6 +36,93 @@ const dayStart = () => {
   return d;
 };
 
+// ---- Live operations: cheap, frequently-pollable real-time-ish stats ----
+// Deliberately lightweight (no Stripe, no full user scan) so the admin panel
+// can refresh it every few seconds. RAM is the live process RSS (single
+// instance), which is what actually trips the OOM limit.
+export async function liveOps() {
+  const now = Date.now();
+  const today = dayStart();
+  const onlineSince = new Date(now - 5 * 60 * 1000);
+
+  const jobsArr = Array.from(jobs.values());
+  const processing = jobsArr.filter((j) => j.status === "processing").length;
+  const queued = jobsArr.filter((j) => j.status === "queued").length;
+  const activeList = jobsArr
+    .filter((j) => j.status === "processing" || j.status === "queued")
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(0, 12)
+    .map((j) => ({ name: j.originalName, stage: j.stage, status: j.status }));
+
+  const mem = process.memoryUsage();
+  const mb = (n: number) => Math.round((n / 1048576) * 10) / 10;
+  const limitMB = Number(process.env.RENDER_MEMORY_LIMIT_MB) || 2048;
+
+  const [onlineRows, failedToday, recentFailures, doneAgg, recentRenders, editsToday, testerRows] =
+    await Promise.all([
+      prisma.event.findMany({
+        where: { ts: { gte: onlineSince }, email: { not: null } },
+        distinct: ["email"],
+        select: { email: true },
+      }),
+      prisma.processingJob.count({ where: { status: "error", createdAt: { gte: today } } }),
+      prisma.processingJob.findMany({
+        where: { status: "error" },
+        orderBy: { createdAt: "desc" },
+        take: 6,
+        select: { name: true, email: true, error: true, createdAt: true },
+      }),
+      prisma.processingJob.aggregate({
+        _avg: { durationMs: true },
+        _count: true,
+        where: { status: "done", createdAt: { gte: today } },
+      }),
+      prisma.processingJob.findMany({
+        where: { status: "done", durationMs: { gt: 0 } },
+        orderBy: { createdAt: "desc" },
+        take: 8,
+        select: { name: true, durationMs: true, createdAt: true },
+      }),
+      prisma.processingJob.count({ where: { status: "done", createdAt: { gte: today } } }),
+      prisma.processingJob.findMany({
+        where: { creatorBeta: true, createdAt: { gte: today } },
+        distinct: ["email"],
+        select: { email: true },
+      }),
+    ]);
+
+  return {
+    ts: new Date().toISOString(),
+    usersOnline: onlineRows.length,
+    processing,
+    queued,
+    activeJobs: processing + queued,
+    activeList,
+    ram: {
+      rssMB: mb(mem.rss),
+      heapUsedMB: mb(mem.heapUsed),
+      heapTotalMB: mb(mem.heapTotal),
+      externalMB: mb(mem.external),
+      limitMB,
+      pct: Math.round((mem.rss / (limitMB * 1048576)) * 1000) / 10,
+    },
+    failedToday,
+    recentFailures: recentFailures.map((e) => ({
+      name: e.name,
+      email: e.email,
+      error: e.error,
+      at: e.createdAt.toISOString(),
+    })),
+    renderTimes: {
+      avgTodayMs: Math.round(doneAgg._avg.durationMs || 0),
+      doneToday: doneAgg._count,
+      recent: recentRenders.map((r) => ({ name: r.name, ms: r.durationMs, at: r.createdAt.toISOString() })),
+    },
+    editsToday,
+    activeTestersToday: testerRows.length,
+  };
+}
+
 export async function adminData() {
   const today = dayStart();
 
