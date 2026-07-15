@@ -23,6 +23,7 @@ import {
 } from "@/lib/plans";
 import { requireAdmin, adminData } from "@/lib/admin";
 import { notify, notificationsEnabled } from "@/lib/notify";
+import { sendTikTokEvent, newEventId } from "@/lib/tiktok";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 
 // ----- Admin: dashboard data + actions -------------------------------------
@@ -231,6 +232,22 @@ async function handleCheckout(req: NextRequest) {
   const { planId } = await req.json().catch(() => ({ planId: "" }));
   const plan = getPlan(planId);
 
+  // TikTok InitiateCheckout (server side; deduped with the pixel via ttEventId).
+  const ttEventId = newEventId();
+  const ttXf = req.headers.get("x-forwarded-for") || "";
+  void sendTikTokEvent({
+    event: "InitiateCheckout",
+    event_id: ttEventId,
+    email: session.email,
+    ip: ttXf.split(",")[0].trim() || req.headers.get("x-real-ip") || null,
+    userAgent: req.headers.get("user-agent"),
+    ttp: req.cookies.get("_ttp")?.value || null,
+    ttclid: req.nextUrl.searchParams.get("ttclid") || req.cookies.get("ttclid")?.value || null,
+    currency: "USD",
+    contents: [{ content_id: plan.id, content_name: plan.name, content_type: "product" }],
+    properties: { content_name: plan.name, plan: plan.id },
+  });
+
   // Use Stripe's live list of subscriptions as the source of truth. This makes
   // duplicate active subscriptions impossible even if the DB is briefly stale.
   const customer = await getOrCreateCustomer(stripe, session.email);
@@ -267,7 +284,7 @@ async function handleCheckout(req: NextRequest) {
     }
     // Sync the DB right away so the dashboard reflects the new plan immediately.
     await syncSubscription(updated, false);
-    return NextResponse.json({ changed: true, message: `Switched to ${plan.name}.` });
+    return NextResponse.json({ changed: true, message: `Switched to ${plan.name}.`, ttEventId });
   }
 
   // No active subscription -> start Stripe Checkout for a new one.
@@ -282,7 +299,7 @@ async function handleCheckout(req: NextRequest) {
     cancel_url: `${origin}/#pricing`,
     allow_promotion_codes: true,
   } as any);
-  return NextResponse.json({ url: checkout.url });
+  return NextResponse.json({ url: checkout.url, ttEventId });
   } catch (e: any) {
     console.error("CHECKOUT ERROR:", e?.message || e);
     const auth = e?.statusCode === 401 || /api key|authentication/i.test(e?.message || "");
@@ -338,6 +355,17 @@ async function handleWebhook(req: NextRequest) {
           const sub: any = await stripe.subscriptions.retrieve(s.subscription);
           if (!sub.metadata?.email && s.metadata?.email) sub.metadata = s.metadata;
           await syncSubscription(sub, true);
+          // TikTok Purchase (server side).
+          const ttPrice = sub?.items?.data?.[0]?.price;
+          void sendTikTokEvent({
+            event: "Purchase",
+            email: sub.metadata?.email || undefined,
+            externalId: sub.metadata?.email || undefined,
+            value: typeof ttPrice?.unit_amount === "number" ? ttPrice.unit_amount / 100 : undefined,
+            currency: (ttPrice?.currency || "usd").toUpperCase(),
+            contents: [{ content_id: planFromSub(sub) || "plan", content_name: getPlan(planFromSub(sub) ?? undefined).name, content_type: "product" }],
+            properties: { plan: planFromSub(sub) || "unknown" },
+          });
           // A completed Checkout = a brand-new paid subscription.
           await notify("subscription", {
             email: sub.metadata?.email,
@@ -348,6 +376,10 @@ async function handleWebhook(req: NextRequest) {
       }
       case "customer.subscription.updated": {
         await syncSubscription(event.data.object, false);
+        const subU: any = event.data.object;
+        if (subU.status === "trialing" && subU.metadata?.email) {
+          void sendTikTokEvent({ event: "StartTrial", email: subU.metadata.email, externalId: subU.metadata.email, properties: { plan: planFromSub(subU) || "unknown" } });
+        }
         break;
       }
       case "customer.subscription.deleted": {
