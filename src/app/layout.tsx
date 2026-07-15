@@ -10,7 +10,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 export const metadata: Metadata = {
   title: "TrimIQ — Turn raw clips into publish-ready videos",
   description:
-    "TrimIQ automatically removes dead space, long pauses, filler words, and bad takes from your videos - then adds captions and smart zooms. Upload, click once, download a TikTok-ready edit.",
+    "TrimIQ automatically removes dead space, long pauses, filler words, and bad takes from your videos - then adds captions and smart zooms. Upload, click once, download an edit ready for TikTok, Reels & Shorts.",
 };
 
 export default function RootLayout({
