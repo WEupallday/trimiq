@@ -21,12 +21,18 @@ import { getStripe, priceIdForPlan, getOrCreateCustomer, syncSubscription, planF
 import {
   getPlan, planForUser, applyPlanGates, priorityFor, maxUploadBytesFor, maxVideoSecondsFor, planSummary,
 } from "@/lib/plans";
-import { requireAdmin, adminData } from "@/lib/admin";
+import { requireAdmin, adminData, liveOps } from "@/lib/admin";
 import { notify, notificationsEnabled } from "@/lib/notify";
 import { sendTikTokEvent, newEventId } from "@/lib/tiktok";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 
 // ----- Admin: dashboard data + actions -------------------------------------
+async function handleAdminLiveOps() {
+  const admin = await requireAdmin();
+  if (!admin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+  return NextResponse.json(await liveOps());
+}
+
 async function handleAdminData() {
   const admin = await requireAdmin();
   if (!admin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
@@ -741,6 +747,7 @@ export async function GET(req: NextRequest) {
 
   // Admin dashboard data.
   if (params.get("admin") === "data") return handleAdminData();
+  if (params.get("admin") === "liveops") return handleAdminLiveOps();
 
   // List recent projects for the logged-in user.
   if (params.get("list") === "1") {
