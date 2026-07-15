@@ -128,7 +128,7 @@ export const CREATOR_BETA_PLAN: Plan = {
   name: "Creator Beta",
   blurb: "Invite-only creator testers",
   priceEnvVar: null,
-  edits: 15, fairUseSoftCap: null, batchSize: 10, maxVideoMin: 15, maxUploadMB: 2048,
+  edits: 15, fairUseSoftCap: null, batchSize: 20, maxVideoMin: 15, maxUploadMB: 2048,
   captions: true, instructions: true, zooms: true,
 regensPerEdit: 10, bulkDownload: true, llmInstructions: true, keelzStyle: true, allFutureFeatures: true,
   priority: 2, slots: 2, retentionHours: 72,
