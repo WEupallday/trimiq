@@ -160,6 +160,45 @@ function isVideo(f: File) {
   return f.type.startsWith("video/") || /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(f.name);
 }
 
+// Upload a File in small parts (~6 MB) so a dropped connection only costs one
+// chunk (auto-retried), not the whole multi-minute transfer. Survives flaky
+// home internet and any proxy/idle timeout on long uploads of large 4K clips.
+const UPLOAD_CHUNK = 6 * 1024 * 1024;
+async function uploadInChunks(
+  file: File,
+  urlFor: (offset: number, chunkIndex: number, isLast: boolean) => string,
+  onProgress?: (pct: number) => void,
+): Promise<void> {
+  const total = file.size;
+  let offset = 0;
+  let chunkIndex = 0;
+  while (offset < total) {
+    const end = Math.min(offset + UPLOAD_CHUNK, total);
+    const isLast = end >= total;
+    const part = file.slice(offset, end);
+    const url = urlFor(offset, chunkIndex, isLast);
+    let ok = false;
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 5 && !ok; attempt++) {
+      try {
+        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: part });
+        if (res.status === 413) throw new Error("TOO_LARGE");
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || ("HTTP " + res.status)); }
+        ok = true;
+      } catch (e) {
+        lastErr = e;
+        if (e instanceof Error && e.message === "TOO_LARGE") throw new Error("That file is too large for your plan.");
+        // Connection dropped / reset — wait and retry the SAME chunk (idempotent server-side).
+        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+      }
+    }
+    if (!ok) throw lastErr instanceof Error ? lastErr : new Error("Your connection dropped during upload. Please try again.");
+    offset = end;
+    chunkIndex++;
+    if (onProgress) onProgress(total > 0 ? Math.min(100, Math.round((offset / total) * 100)) : 100);
+  }
+}
+
 export default function UploadStudio({ credits, unlimited }: { credits: number; unlimited: boolean }) {
   const router = useRouter();
   const [creditsLeft, setCreditsLeft] = useState(credits);
@@ -438,8 +477,8 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
         if (f.size / 1024 / 1024 > (plan?.maxUploadMB ?? MAX_UPLOAD_MB)) throw new Error(`"${f.name}" is too large for your plan.`);
-        const r = await fetch(`/api/process?stitch=${group}&index=${i}&name=${encodeURIComponent(f.name)}`, { method: "POST", headers: { "Content-Type": f.type || "video/mp4" }, body: f });
-        if (!r.ok) { const j = await safeJson(r); throw new Error(j.error || "A clip failed to upload."); }
+        await uploadInChunks(f, (off, ci, last) => `/api/process?stitch=${group}&index=${i}&name=${encodeURIComponent(f.name)}&chunk=${ci}&offset=${off}&last=${last ? 1 : 0}`, (pct) => patch(item.id, { stage: `Uploading clip ${i + 1}/${files.length} · ${pct}%` }));
+        // uploadInChunks throws a clear message if a clip fails to upload after retries.
         patch(item.id, { stage: `Uploading clips (${i + 1}/${files.length})` });
       }
       patch(item.id, { status: "processing", stage: "Combining" });
