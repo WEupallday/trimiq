@@ -386,9 +386,11 @@ export default function UploadStudio({ credits, unlimited }: { credits: number; 
         return null;
       }
       if (instructions.trim()) track("instructions_used");
+      const _upId = `u${Date.now()}${Math.floor(Math.random() * 1e6)}`;
+      await uploadInChunks(item.file, (off, ci, last) => `/api/process?rawupload=${_upId}&chunk=${ci}&offset=${off}&last=${last ? 1 : 0}`, (pct) => patch(item.id, { stage: `Uploading ${pct}%` }));
       const res = await fetch(
-        `/api/process?mode=${encodeURIComponent(mode)}&batch=${encodeURIComponent(batchRef.current)}&name=${encodeURIComponent(item.file.name)}&instructions=${encodeURIComponent(instructions.trim())}${captionsOn ? `&captions=1&capcolor=${captionColor}` : ""}`,
-        { method: "POST", headers: { "Content-Type": item.file.type || "video/mp4" }, body: item.file }
+        `/api/process?fromUpload=${_upId}&mode=${encodeURIComponent(mode)}&batch=${encodeURIComponent(batchRef.current)}&name=${encodeURIComponent(item.file.name)}&instructions=${encodeURIComponent(instructions.trim())}${captionsOn ? `&captions=1&capcolor=${captionColor}` : ""}`,
+        { method: "POST" }
       );
       if (!res.ok) {
         const j = await safeJson(res);
