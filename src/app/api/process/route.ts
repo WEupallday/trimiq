@@ -493,6 +493,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  // Chunked upload sink for single/batch edits: client slices the file into ~6MB
+  // parts and re-sends any dropped part, so the transfer survives flaky phone
+  // connections and proxy/idle timeouts. Reassembled here; ?fromUpload= then processes it.
+  const _raw = req.nextUrl.searchParams.get("rawupload");
+  if (_raw !== null) {
+    const _updir = join(tmpdir(), "trimiq-uploads");
+    await mkdir(_updir, { recursive: true });
+    const _rp = join(_updir, _raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80) + ".mp4");
+    const _rchunk = req.nextUrl.searchParams.get("chunk");
+    if (_rchunk !== null) {
+      const _roff = Math.max(0, parseInt(req.nextUrl.searchParams.get("offset") || "0", 10) || 0);
+      const _rbuf = Buffer.from(await req.arrayBuffer());
+      if (_roff + _rbuf.length > 4 * 1024 * 1024 * 1024) return NextResponse.json({ error: "That file is too large." }, { status: 413 });
+      const _rfh = await open(_rp, _roff === 0 ? "w" : "r+");
+      try { await _rfh.write(_rbuf, 0, _rbuf.length, _roff); } finally { await _rfh.close(); }
+      const _rst = await stat(_rp).catch(() => null);
+      return NextResponse.json({ ok: true, size: _rst ? _rst.size : _roff + _rbuf.length });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   // Multi-clip stitching: collect ONE clip into a per-user group folder. The
   // client uploads each clip here, then calls ?stitchRun to combine + edit.
   const stitchGroup = req.nextUrl.searchParams.get("stitch");
@@ -524,7 +545,7 @@ export async function POST(req: NextRequest) {
 
   let inPath = "";
   try {
-    if (!req.body && !req.nextUrl.searchParams.get("reedit") && !req.nextUrl.searchParams.get("stitchRun")) {
+    if (!req.body && !req.nextUrl.searchParams.get("reedit") && !req.nextUrl.searchParams.get("stitchRun") && !req.nextUrl.searchParams.get("fromUpload")) {
       return NextResponse.json({ error: "No video received. Please choose a file and try again." }, { status: 400 });
     }
     const session = await getSession();
@@ -623,10 +644,12 @@ export async function POST(req: NextRequest) {
 
     const dir = await mkdtemp(join(tmpdir(), "trimiq-"));
     const id = randomUUID();
-    inPath = reusedInput || stitchInput || join(dir, `${id}-in.mp4`);
+    const _fu = req.nextUrl.searchParams.get("fromUpload");
+    const uploadedInput = _fu ? join(tmpdir(), "trimiq-uploads", _fu.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80) + ".mp4") : null;
+    inPath = reusedInput || stitchInput || uploadedInput || join(dir, `${id}-in.mp4`);
     const outPath = join(dir, `${id}-out.mp4`);
 
-    if (!reusedInput && !stitchInput) await pipeline(Readable.fromWeb(req.body as any), createWriteStream(inPath));
+    if (!reusedInput && !stitchInput && !uploadedInput) await pipeline(Readable.fromWeb(req.body as any), createWriteStream(inPath));
 
     const { size } = await stat(inPath);
     if (size < 1024) {
