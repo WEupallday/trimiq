@@ -28,6 +28,8 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
   const [busyId, setBusyId] = useState("");
   const [testMsg, setTestMsg] = useState("");
   const [updatedAt, setUpdatedAt] = useState<string>("");
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const s = data.stats;
   const r = data.revenue || {};
 
@@ -113,6 +115,7 @@ export default function AdminDashboard({ data: initialData }: { data: any }) {
     return (u.username || "").toLowerCase().includes(t) || u.email.toLowerCase().includes(t);
   });
 
+  if (!mounted) return <div className="space-y-10" />;
   return (
     <div className="space-y-10">
       <div className="flex items-center gap-2 text-xs text-white/40">
